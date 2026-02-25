@@ -28,4 +28,5 @@ def predict_action(image, model=model):
     pred = model.predict([img])
     return pred[0]
 
-print(predict_action(cv2.imread(os.path.join(__current_dir, "hasy-data/v2-00149.png"), cv2.IMREAD_GRAYSCALE)))
+if __name__ == '__main__':
+    print(predict_action(cv2.imread(os.path.join(__current_dir, "hasy-data/v2-00149.png"), cv2.IMREAD_GRAYSCALE)))
