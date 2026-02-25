@@ -11,42 +11,44 @@ class Spell:
         
         # Color based on type
         if type == "/": 
-            self.color = (255, 60, 0) # Fire (Vibrant Red-Orange)
+            self.color = (255, 50, 0) # Fire Red
         elif type == "\\": 
-            self.color = (240, 240, 240) # Normal (Bright White/Silver)
+            self.color = (240, 240, 240) # Normal White
         elif type == "|":
-            self.color = (0, 120, 255) # Block (Electric Blue)
+            self.color = (50, 120, 255) # Block Blue
             self.speed = 5 * direction
         elif type == "O":
-            self.color = (0, 255, 180) # Freeze (Mint Ice)
+            self.color = (0, 255, 255) # Ice Cyan
+            self.speed = 15 * direction # Fast freeze
         else:
-            self.color = (255, 255, 255)
+            self.color = (200, 200, 200)
 
     def update(self, particle_system=None):
         self.rect.x += self.speed
         if particle_system:
-            # Emit trail particles
+            # Emit intense trail
             ptype = "circle"
-            count = 1
+            count = 2
             if self.type == "/": 
                 ptype = "spark"
-                count = 2
+                count = 4
+            elif self.type == "O":
+                count = 3
             particle_system.emit(self.rect.centerx, self.rect.centery, self.color, count=count, ptype=ptype)
 
-        if self.rect.x < -50 or self.rect.x > WIDTH + 50:
+        if self.rect.x < -100 or self.rect.x > WIDTH + 100:
             self.active = False
 
     def draw(self, surface):
-        # Main projectile body
+        # projectile body
         pygame.draw.rect(surface, self.color, self.rect, border_radius=10)
         
-        # Inner core (lighter color)
-        core_color = [min(255, c + 100) for c in self.color]
-        core_rect = self.rect.inflate(-8, -8)
-        pygame.draw.rect(surface, core_color, core_rect, border_radius=5)
+        # Inner core (white-ish)
+        core_rect = self.rect.inflate(-10, -10)
+        pygame.draw.rect(surface, (255, 255, 255), core_rect, border_radius=5)
 
-        # Glow effect
-        glow_size = 20
+        # Large Glow effect
+        glow_size = 30
         glow_surf = pygame.Surface((self.rect.width + glow_size, self.rect.height + glow_size), pygame.SRCALPHA)
-        pygame.draw.ellipse(glow_surf, (*self.color, 60), (0, 0, glow_surf.get_width(), glow_surf.get_height()))
+        pygame.draw.ellipse(glow_surf, (*self.color, 40), (0, 0, glow_surf.get_width(), glow_surf.get_height()))
         surface.blit(glow_surf, (self.rect.x - glow_size//2, self.rect.y - glow_size//2))

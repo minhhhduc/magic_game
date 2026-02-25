@@ -2,62 +2,62 @@ import pygame
 import random
 from settings import *
 
-class Particle:
-    def __init__(self, x, y, color, size=None, vx=None, vy=None):
-        self.x = x
-        self.y = y
-        self.color = color
-        self.vx = vx if vx is not None else random.uniform(-2, 2)
-        self.vy = vy if vy is not None else random.uniform(-2, 2)
-        self.life = 255
-        self.decay = random.uniform(5, 12)
-        self.size = size if size is not None else random.randint(3, 6)
+class ParticleBase:
+    def update(self) -> bool: return False
+    def draw(self, surface: pygame.Surface): pass
 
-    def update(self):
+class Particle(ParticleBase):
+    def __init__(self, x, y, color, size=None, vx=None, vy=None, decay=None):
+        self.x = float(x)
+        self.y = float(y)
+        self.color = color
+        self.vx = float(vx if vx is not None else random.uniform(-2, 2))
+        self.vy = float(vy if vy is not None else random.uniform(-2, 2))
+        self.life = 255.0
+        self.decay = float(decay if decay is not None else random.uniform(5, 12))
+        self.size = float(size if size is not None else random.randint(3, 6))
+
+    def update(self) -> bool:
         self.x += self.vx
         self.y += self.vy
         self.life -= self.decay
-        self.size *= 0.95 # Particles shrink over time
+        self.size *= 0.96
         return self.life > 0
 
     def draw(self, surface):
-        alpha = max(0, int(self.life))
-        color = (*self.color, alpha)
-        s = pygame.Surface((self.size * 2, self.size * 2), pygame.SRCALPHA)
-        pygame.draw.circle(s, color, (self.size, self.size), self.size)
-        surface.blit(s, (self.x - self.size, self.y - self.size))
+        if self.life <= 0: return
+        pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), int(self.size))
+        if self.size > 2:
+            pygame.draw.circle(surface, (255, 255, 255), (int(self.x), int(self.y)), int(self.size//2))
 
-class Spark:
-    def __init__(self, x, y, color):
-        self.x = x
-        self.y = y
+class Spark(ParticleBase):
+    def __init__(self, x, y, color, vx=None, vy=None):
+        self.x = float(x)
+        self.y = float(y)
         self.color = color
-        angle = random.uniform(0, 3.14 * 2)
-        speed = random.uniform(2, 5)
-        self.vx = speed * random.uniform(-1, 1)
-        self.vy = speed * random.uniform(-1, 1)
-        self.life = 255
-        self.decay = random.uniform(10, 20)
+        speed = random.uniform(4, 8)
+        self.vx = float(vx if vx is not None else random.uniform(-1, 1) * speed)
+        self.vy = float(vy if vy is not None else random.uniform(-1, 1) * speed)
+        self.life = 255.0
+        self.decay = float(random.uniform(10, 20))
 
-    def update(self):
+    def update(self) -> bool:
         self.x += self.vx
         self.y += self.vy
+        self.vy += 0.1 # Gravity
         self.life -= self.decay
         return self.life > 0
 
     def draw(self, surface):
-        points = [
-            (self.x + self.vx * 2, self.y + self.vy * 2),
-            (self.x - self.vy, self.y + self.vx),
-            (self.x + self.vy, self.y - self.vx)
-        ]
-        alpha = max(0, int(self.life))
-        color = (*self.color, alpha)
-        pygame.draw.polygon(surface, color, points)
+        if self.life <= 0: return
+        end_x = self.x - self.vx * 1.5
+        end_y = self.y - self.vy * 1.5
+        pygame.draw.line(surface, self.color, (int(self.x), int(self.y)), (int(end_x), int(end_y)), 2)
+        pygame.draw.line(surface, (255, 255, 255), (int(self.x), int(self.y)), (int(self.x - self.vx*0.5), int(self.y - self.vy*0.5)), 1)
 
 class ParticleSystem:
     def __init__(self):
-        self.particles = []
+        self.particles: list[ParticleBase] = []
 
     def emit(self, x, y, color, count=5, ptype="circle"):
         for _ in range(count):
@@ -65,6 +65,13 @@ class ParticleSystem:
                 self.particles.append(Particle(x, y, color))
             elif ptype == "spark":
                 self.particles.append(Spark(x, y, color))
+
+    def burst(self, x, y, color, count=15, ptype="spark"):
+        for _ in range(count):
+            if ptype == "spark":
+                self.particles.append(Spark(x, y, color))
+            else:
+                self.particles.append(Particle(x, y, color, size=random.randint(4, 8), decay=random.uniform(10, 20)))
 
     def update(self):
         self.particles = [p for p in self.particles if p.update()]

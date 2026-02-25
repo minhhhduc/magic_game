@@ -42,7 +42,7 @@ class Bot:
             self.burn_damage_timer += 1
             if self.burn_damage_timer >= 120:
                 damage = self.max_health * 0.05
-                self.health = max(0, self.health - damage)
+                self.health = max(0.0, self.health - damage)
                 self.burn_damage_timer = 0
                 print(f"Bot took burn damage! Health: {self.health}")
         
@@ -59,8 +59,9 @@ class Bot:
             if not s.active:
                 self.spells.remove(s)
 
-        # Skip logic if frozen
+        # Skip AI logic if frozen
         if self.freeze_timer > 0:
+            self.v_move_dir = 0
             return
 
         # AI Decisions - Horizontal
@@ -74,7 +75,7 @@ class Bot:
                 self.rect.x += -3 if dist > 0 else 3
             elif abs(dist) < 300 and random.random() < 0.05:
                 self.state = "STAND_ATTACK"
-                self._cast_random_spell()
+                self._cast_random_spell(particle_system)
                 self.action_cooldown = 80
             else:
                 self.state = "CHASE"
@@ -105,25 +106,33 @@ class Bot:
                 self.rect.bottom = HEIGHT - margin
                 self.v_move_dir = 0
 
-    def _cast_random_spell(self):
+    def _cast_random_spell(self, particle_system=None):
+        if self.freeze_timer > 0: return # Extra safety
         # Choose from all new types
         stype = random.choice(["/", "\\", "O"])
         direction = -1 if self.rect.centerx > WIDTH // 2 else 1
         new_spell = Spell(self.rect.left - 30 if direction < 0 else self.rect.right, self.rect.centery, direction, stype)
         self.spells.append(new_spell)
+        if particle_system:
+            particle_system.burst(new_spell.rect.centerx, new_spell.rect.centery, new_spell.color, count=8, ptype="circle")
 
     def draw(self, surface):
-        # Shake effect when hurt
+        # Shake effect
         draw_x, draw_y = self.rect.x, self.rect.y
         if self.hurt_timer > 0:
             draw_x += random.randint(-4, 4)
             draw_y += random.randint(-4, 4)
+        elif self.freeze_timer > 0:
+            draw_x += random.randint(-1, 1)
+            draw_y += random.randint(-1, 1)
 
         draw_color = self.color
         if self.hurt_timer > 0:
             draw_color = (255, 255, 255) # Flash White
         elif self.freeze_timer > 0:
             draw_color = (150, 255, 255) # Ice blue
+        elif self.burn_timer > 0:
+            draw_color = (255, 150, 50) # Burning orange
             
         pygame.draw.rect(surface, draw_color, (draw_x, draw_y, self.rect.width, self.rect.height), border_radius=5)
         

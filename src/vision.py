@@ -144,23 +144,19 @@ class VisionSystem:
             if roi.size == 0:
                 roi = self.canvas
 
-            pred = predict_action(roi)
+            spell, debug_img, raw_pred = predict_action(roi)
             
-            # Normalize common symbols to match game expectations
-            if pred in ["O", "o", "0", "@", "4"]:
-                self.current_gesture = "O"
-            elif pred in ["/", "7", "1"]:
-                self.current_gesture = "/"
-            elif pred in ["\\", "L", "l", "backslash", "2"]:
-                self.current_gesture = "\\"
-            elif pred in ["|", "I", "3"]:
-                self.current_gesture = "|"
+            # Show debug window with preprocessed image (scaled up for visibility)
+            debug_display = cv2.resize(debug_img, (140, 140), interpolation=cv2.INTER_NEAREST)
+            cv2.imshow("Debug - Preprocessed ROI (28x28)", debug_display)
+            
+            if spell is not None:
+                self.current_gesture = spell
+                print(f"\n==============================")
+                print(f"🪄  SPELL DETECTED: {spell} (raw class: {raw_pred})")
+                print(f"==============================\n")
             else:
-                self.current_gesture = pred
-            
-            print(f"\n==============================")
-            print(f"🪄  SPELL DETECTED: {self.current_gesture}")
-            print(f"==============================\n")
+                print(f"⚠️  Unknown class: {raw_pred}, ignoring.")
                 
         except Exception as e:
             print(f"Prediction Error: {e}")

@@ -89,6 +89,10 @@ class Player:
         if self.hurt_timer > 0:
             draw_x += random.randint(-4, 4)
             draw_y += random.randint(-4, 4)
+        elif self.freeze_timer > 0:
+            # Subtle shivering
+            draw_x += random.randint(-1, 1)
+            draw_y += random.randint(-1, 1)
 
         draw_color = self.color
         if self.hurt_timer > 0: 
@@ -110,6 +114,7 @@ class Player:
             ice_surf = pygame.Surface((self.rect.width + 12, self.rect.height + 12), pygame.SRCALPHA)
             pygame.draw.rect(ice_surf, (200, 255, 255, 130), (0, 0, ice_surf.get_width(), ice_surf.get_height()), border_radius=10)
             pygame.draw.line(ice_surf, (255, 255, 255, 150), (10, 10), (self.rect.width, self.rect.height), 2)
+            pygame.draw.line(ice_surf, (255, 255, 255, 150), (self.rect.width, 10), (10, self.rect.height), 1)
             surface.blit(ice_surf, (draw_x - 6, draw_y - 6))
 
         # Shield effect
@@ -119,7 +124,7 @@ class Player:
         for s in self.spells:
             s.draw(surface)
 
-    def cast_spell(self, gesture):
+    def cast_spell(self, gesture, particle_system=None):
         if self.cooldown > 0 or self.freeze_timer > 0: return
         
         # Block is a special "spell"
@@ -132,3 +137,6 @@ class Player:
         new_spell = Spell(self.rect.right, self.rect.centery, 1, gesture)
         self.spells.append(new_spell)
         self.cooldown = 40
+        
+        if particle_system:
+            particle_system.burst(self.rect.right, self.rect.centery, new_spell.color, count=10, ptype="circle")
