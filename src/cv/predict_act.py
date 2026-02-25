@@ -8,6 +8,15 @@ model = joblib.load(os.path.join(__current_dir, "character_classifier.pkl"))
 
 def parse_shape(img):
     w, h = 28, 28
+    
+    # Find bounding box of non-zero pixels (assuming drawing is white/255 on black/0)
+    coords = cv2.findNonZero(img)
+    if coords is not None:
+        x, y, bw, bh = cv2.boundingRect(coords)
+        # Crop to the bounding box
+        img = img[y:y+bh, x:x+bw]
+    
+    # Resize to 28x28, filling the entire frame (as requested: "nhiều cạnh chạm khung nhất")
     img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
 
     return img.flatten()

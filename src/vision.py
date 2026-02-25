@@ -1,21 +1,66 @@
 import cv2
-import mediapipe as mp
 import threading
 import numpy as np
+import os
+import sys
+
+# Try multiple import styles for mediapipe to ensure compatibility
+try:
+    import mediapipe as mp
+    # Robustly find solutions if standard import fails
+    try:
+        from mediapipe.solutions import hands as mp_hands
+        from mediapipe.solutions import drawing_utils as mp_draw
+    except ImportError:
+        # Some versions (0.10.x) hide solutions inside python/solutions
+        mp_path = os.path.dirname(mp.__file__)
+        python_path = os.path.join(mp_path, 'python')
+        if python_path not in sys.path:
+            sys.path.append(python_path)
+        import solutions.hands as mp_hands
+        import solutions.drawing_utils as mp_draw
+except Exception as e:
+    print(f"MediaPipe Import Critical Error: {e}")
+    # Fallback to allow game to start in keyboard mode
+    mp_hands = None
+    mp_draw = None
+
+# Add project root to path to import from src
+base_path = os.path.dirname(os.path.abspath(__file__))
+if base_path not in sys.path:
+    sys.path.append(os.path.join(base_path, '..'))
+
+from src.cv.predict_act import predict_action
 
 class VisionSystem:
     def __init__(self):
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=1,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.5
-        )
-        self.mp_draw = mp.solutions.drawing_utils
+        if mp_hands is None:
+            raise ImportError("MediaPipe not available")
+            
+        try:
+            self.hands = mp_hands.Hands(
+                static_image_mode=False,
+                max_num_hands=1,
+                min_detection_confidence=0.7,
+                min_tracking_confidence=0.5
+            )
+            self.mp_draw = mp_draw
+        except Exception as e:
+            print(f"MediaPipe hands failed: {e}")
+            raise e
+
         self.cap = cv2.VideoCapture(0)
         
-        self.current_gesture = None
+        # Canvas for drawing
+        ret, frame = self.cap.read()
+        if ret:
+            self.h, self.w, _ = frame.shape
+        else:
+            self.h, self.w = 480, 640
+            
+        self.canvas = np.zeros((self.h, self.w), dtype=np.uint8)
+        
+        self.current_gesture: str | None = None
         self.drawing_points = []
         self.is_drawing = False
         self.running = True
@@ -38,62 +83,87 @@ class VisionSystem:
                 for hand_lms in results.multi_hand_landmarks:
                     # Index finger tip (ID 8)
                     index_tip = hand_lms.landmark[8]
-                    h, w, c = frame.shape
-                    cx, cy = int(index_tip.x * w), int(index_tip.y * h)
+                    cx, cy = int(index_tip.x * self.w), int(index_tip.y * self.h)
                     
-                    # Detect if thumb and index are close (drawing mode)
-                    thumb_tip = hand_lms.landmark[4]
-                    tx, ty = int(thumb_tip.x * w), int(thumb_tip.y * h)
-                    distance = np.sqrt((cx-tx)**2 + (cy-ty)**2)
+                    # Middle finger tip (ID 12)
+                    middle_tip = hand_lms.landmark[12]
+                    mx, my = int(middle_tip.x * self.w), int(middle_tip.y * self.h)
                     
+                    # Distance between Index and Middle tips
+                    distance = np.sqrt((cx-mx)**2 + (cy-my)**2)
+                    
+                    # If pinched (Index and Middle touch), STOP drawing and PREDICT
                     if distance < 40:
-                        self.is_drawing = True
-                        self.drawing_points.append((cx, cy))
-                    else:
                         if self.is_drawing:
+                            print("Stop Drawing - Predicting...")
                             self._classify_gesture()
                             self.is_drawing = False
                             self.drawing_points = []
+                            self.canvas.fill(0)
+                    else:
+                        # Otherwise, Draw with Index finger
+                        self.is_drawing = True
+                        if len(self.drawing_points) > 0:
+                            last_pt = self.drawing_points[-1]
+                            # Simple distance check to prevent huge lines if hand jumps
+                            dist_move = np.sqrt((cx-last_pt[0])**2 + (cy-last_pt[1])**2)
+                            if dist_move < 100:
+                                cv2.line(self.canvas, last_pt, (cx, cy), 255, 15)
+                        self.drawing_points.append((cx, cy))
                     
-                    self.mp_draw.draw_landmarks(frame, hand_lms, self.mp_hands.HAND_CONNECTIONS)
+                    if self.mp_draw and mp_hands:
+                        self.mp_draw.draw_landmarks(frame, hand_lms, mp_hands.HAND_CONNECTIONS)
             
-            # Draw trail
-            for i in range(1, len(self.drawing_points)):
-                cv2.line(frame, self.drawing_points[i-1], self.drawing_points[i], (0, 255, 150), 3)
+            # Overlay drawing on frame
+            drawing_mask = self.canvas > 0
+            frame[drawing_mask] = [0, 255, 150] # Neon green trail
 
-            cv2.imshow("Vision - Magic Game", frame)
+            # Show windows
+            cv2.imshow("Vision - Camera", frame)
+            cv2.imshow("Vision - Canvas (What you draw)", self.canvas)
+            
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 self.running = False
                 break
 
     def _classify_gesture(self):
-        if len(self.drawing_points) < 10:
+        if len(self.drawing_points) < 10: # Minimum points to consider a drawing
             return
 
-        # Simplified gesture classification based on start/end points and bounding box
-        pts = np.array(self.drawing_points)
-        x_min, y_min = np.min(pts, axis=0)
-        x_max, y_max = np.max(pts, axis=0)
-        dx = self.drawing_points[-1][0] - self.drawing_points[0][0]
-        dy = self.drawing_points[-1][1] - self.drawing_points[0][1]
-        
-        width = x_max - x_min
-        height = y_max - y_min
-        
-        # Recognize / (slant left-up to right-down or similar)
-        if dy > 50 and dx > 50:
-            self.current_gesture = "/"
-        # Recognize \
-        elif dy > 50 and dx < -50:
-            self.current_gesture = "\\"
-        # Recognize ^ (Peak)
-        elif height > 50 and abs(dx) < 100:
-            # Check if mid point is higher than start/end
-            mid_pt = self.drawing_points[len(self.drawing_points)//2]
-            if mid_pt[1] < self.drawing_points[0][1] - 30:
-                self.current_gesture = "^"
-        
-        print(f"Detected Gesture: {self.current_gesture}")
+        try:
+            # Crop the drawing area to handle better scale
+            pts = np.array(self.drawing_points)
+            x, y, w, h = cv2.boundingRect(pts)
+            
+            # Add some padding
+            pad = 40
+            y1, y2 = max(0, y-pad), min(self.h, y+h+pad)
+            x1, x2 = max(0, x-pad), min(self.w, x+w+pad)
+            
+            roi = self.canvas[y1:y2, x1:x2]
+            if roi.size == 0:
+                roi = self.canvas
+
+            pred = predict_action(roi)
+            
+            # Normalize common symbols to match game expectations
+            if pred in ["O", "o", "0", "@", "4"]:
+                self.current_gesture = "O"
+            elif pred in ["/", "7", "1"]:
+                self.current_gesture = "/"
+            elif pred in ["\\", "L", "l", "backslash", "2"]:
+                self.current_gesture = "\\"
+            elif pred in ["|", "I", "3"]:
+                self.current_gesture = "|"
+            else:
+                self.current_gesture = pred
+            
+            print(f"\n==============================")
+            print(f"🪄  SPELL DETECTED: {self.current_gesture}")
+            print(f"==============================\n")
+                
+        except Exception as e:
+            print(f"Prediction Error: {e}")
 
     def get_gesture(self):
         g = self.current_gesture
