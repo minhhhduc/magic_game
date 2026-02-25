@@ -1,2 +1,11 @@
 __pycache__
 .venv
+src/cv/classification-task
+src/cv/data-cut
+src/cv/hasy-data
+src/cv/verification-task
+src/cv/HASYv2.tar.bz2
+src/cv/hasy_tools.py
+src/cv/hasy-data-labels.csv
+src/cv/README.txt
+src/cv/symbols.csv
