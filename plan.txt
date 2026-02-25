@@ -1,0 +1,7 @@
+game đối kháng,
+
+cho phép người chơi đánh và nhận sát thương, và sẽ có các hiệu ứng khác nhau
+
+- sử lí ảnh thời gian thực
+
+- thư viện opencv-python để xử lý ảnh
