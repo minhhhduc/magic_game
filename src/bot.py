@@ -2,13 +2,17 @@ import pygame
 import random
 from settings import *
 from spells import Spell
+from pixel_sprites import (
+    create_bot_sprite, create_ice_overlay,
+    create_shield_overlay, create_tinted_variant,
+    create_white_flash
+)
 
 class Bot:
     def __init__(self, x, y):
-        self.rect = pygame.Rect(x, y, 50, 80)
+        self.rect = pygame.Rect(x, y, 48, 66)  # 16*3 x 22*3
         self.health = 100.0
         self.max_health = 100.0
-        self.color = (255, 50, 50)
         self.state = "IDLE"
         self.action_cooldown = 0
         self.spells = []
@@ -25,7 +29,35 @@ class Bot:
         self.v_move_dir = 0
         self.v_move_speed = 3
 
-    def update(self, player_rect, particle_system=None):
+        # Pixel art sprites
+        self.base_sprite = create_bot_sprite()
+        self.hurt_sprite = None
+        self.freeze_sprite = None
+        self.burn_sprite = None
+        self.ice_overlay = None
+        self.shield_overlay = None
+        self._build_variants()
+
+    def set_bot_sprite(self, sprite_surface):
+        """Replace the bot sprite with a character-specific one and regenerate variants."""
+        self.base_sprite = sprite_surface
+        self._build_variants()
+
+    def _build_variants(self):
+        """Build hurt/freeze/burn variants from the current base_sprite."""
+        self.hurt_sprite = create_white_flash(self.base_sprite)
+        self.freeze_sprite = create_tinted_variant(self.base_sprite, (100, 200, 255), 100)
+        self.burn_sprite = create_tinted_variant(self.base_sprite, (255, 100, 0), 80)
+        self.ice_overlay = create_ice_overlay(self.rect.width + 10, self.rect.height + 10)
+        self.shield_overlay = create_shield_overlay(self.rect.width + 10, self.rect.height + 10)
+        # Flip bot sprite to face left
+        self.base_sprite = pygame.transform.flip(self.base_sprite, True, False)
+        if self.hurt_sprite: self.hurt_sprite = pygame.transform.flip(self.hurt_sprite, True, False)
+        if self.freeze_sprite: self.freeze_sprite = pygame.transform.flip(self.freeze_sprite, True, False)
+        if self.burn_sprite: self.burn_sprite = pygame.transform.flip(self.burn_sprite, True, False)
+
+    def update(self, player, particle_system=None, sounds=None):
+        player_rect = player.rect
         if self.action_cooldown > 0: self.action_cooldown -= 1
         if self.freeze_timer > 0: self.freeze_timer -= 1
         if self.block_timer > 0: self.block_timer -= 1
@@ -41,8 +73,7 @@ class Bot:
             
             self.burn_damage_timer += 1
             if self.burn_damage_timer >= 120:
-                damage = self.max_health * 0.05
-                self.health = max(0.0, self.health - damage)
+                self.health = max(0.0, self.health - 5.0)
                 self.burn_damage_timer = 0
                 print(f"Bot took burn damage! Health: {self.health}")
         
@@ -63,32 +94,55 @@ class Bot:
         if self.freeze_timer > 0:
             self.v_move_dir = 0
             return
-
+ 
+        # Reactive Dodge Logic: If player spell is coming close
+        incoming_threat = False
+        for s in player.spells:
+            if abs(s.rect.centerx - self.rect.centerx) < 200:
+                incoming_threat = True
+                break
+        
+        if incoming_threat and self.action_cooldown == 0:
+            choice = random.random()
+            if choice < 0.3: # Block
+                self.block_timer = 120 # 2s
+                self.action_cooldown = 60
+                return
+            elif choice < 0.6: # Jump
+                self.v_move_dir = -1
+                self.v_move_timer = 30
+                self.action_cooldown = 40
+            else: # Dodge Horizontal
+                self.state = "DODGE"
+                self.action_cooldown = 30
+ 
         # AI Decisions - Horizontal
         dist = player_rect.centerx - self.rect.centerx
         
-        # Chance to Dodge or stand still to attack
+        # Chance tostand still to attack
         if self.action_cooldown == 0:
-            if abs(dist) < 150 and random.random() < 0.1:
-                self.state = "DODGE"
-                # Move away from player
-                self.rect.x += -3 if dist > 0 else 3
-            elif abs(dist) < 300 and random.random() < 0.05:
+            if abs(dist) < 350 and random.random() < 0.08:
                 self.state = "STAND_ATTACK"
-                self._cast_random_spell(particle_system)
-                self.action_cooldown = 80
+                # Smart spell selection
+                if player.freeze_timer <= 0:
+                    stype = "O" if random.random() < 0.6 else random.choice(["/", "\\"])
+                else:
+                    stype = random.choice(["/", "\\"])
+                
+                self._cast_random_spell(particle_system, stype, sounds)
+                self.action_cooldown = 60 # Faster attacks
             else:
                 self.state = "CHASE"
-
-        # Horizontal Movement logic based on state
-        if self.state == "CHASE" and abs(dist) > 200:
-            self.rect.x += 2 if dist > 0 else -2
+ 
+        # Horizontal Movement logic
+        move_speed = 4
+        if self.state == "CHASE" and abs(dist) > 180:
+            self.rect.x += move_speed if dist > 0 else -move_speed
         elif self.state == "DODGE":
-            self.rect.x += -4 if dist > 0 else 4
-            # Boundary check for dodge
+            self.rect.x += -move_speed * 1.5 if dist > 0 else move_speed * 1.5
             self.rect.x = max(50, min(WIDTH - 100, self.rect.x))
-
-        # New: Vertical Movement logic
+ 
+        # Vertical Movement logic
         if self.v_move_timer <= 0:
             # Pick a random direction (-1, 0, 1) and a random time (30 to 120 frames)
             self.v_move_dir = random.choice([-1, 0, 1])
@@ -106,13 +160,25 @@ class Bot:
                 self.rect.bottom = HEIGHT - margin
                 self.v_move_dir = 0
 
-    def _cast_random_spell(self, particle_system=None):
+    def _cast_random_spell(self, particle_system=None, stype=None, sounds=None):
         if self.freeze_timer > 0: return # Extra safety
-        # Choose from all new types
-        stype = random.choice(["/", "\\", "O"])
+        # Choose from all types if not specified
+        if stype is None:
+            stype = random.choice(["/", "\\", "O"])
+
         direction = -1 if self.rect.centerx > WIDTH // 2 else 1
         new_spell = Spell(self.rect.left - 30 if direction < 0 else self.rect.right, self.rect.centery, direction, stype)
         self.spells.append(new_spell)
+        
+        # Play skill sound immediately on cast
+        if sounds:
+            if stype == "/" and sounds.get("gun"):
+                sounds["gun"].play(maxtime=800)
+            elif stype == "\\" and sounds.get("explosion"):
+                sounds["explosion"].play(maxtime=800)
+            elif stype == "O" and sounds.get("freeze"):
+                sounds["freeze"].play(maxtime=800)
+        
         if particle_system:
             particle_system.burst(new_spell.rect.centerx, new_spell.rect.centery, new_spell.color, count=8, ptype="circle")
 
@@ -120,34 +186,31 @@ class Bot:
         # Shake effect
         draw_x, draw_y = self.rect.x, self.rect.y
         if self.hurt_timer > 0:
-            draw_x += random.randint(-4, 4)
-            draw_y += random.randint(-4, 4)
+            draw_x += random.randint(-3, 3)
+            draw_y += random.randint(-3, 3)
         elif self.freeze_timer > 0:
             draw_x += random.randint(-1, 1)
             draw_y += random.randint(-1, 1)
 
-        draw_color = self.color
+        # Choose sprite based on state
         if self.hurt_timer > 0:
-            draw_color = (255, 255, 255) # Flash White
+            sprite = self.hurt_sprite
         elif self.freeze_timer > 0:
-            draw_color = (150, 255, 255) # Ice blue
+            sprite = self.freeze_sprite
         elif self.burn_timer > 0:
-            draw_color = (255, 150, 50) # Burning orange
-            
-        pygame.draw.rect(surface, draw_color, (draw_x, draw_y, self.rect.width, self.rect.height), border_radius=5)
-        
-        # Dark eyes
-        pygame.draw.rect(surface, (0, 0, 0), (draw_x + 10, draw_y + 20, 10, 10))
-        pygame.draw.rect(surface, (0, 0, 0), (draw_x + 30, draw_y + 20, 10, 10))
+            sprite = self.burn_sprite
+        else:
+            sprite = self.base_sprite
+
+        surface.blit(sprite, (draw_x, draw_y))
 
         # Ice Overlay
         if self.freeze_timer > 0:
-            ice_surf = pygame.Surface((self.rect.width + 10, self.rect.height + 10), pygame.SRCALPHA)
-            pygame.draw.rect(ice_surf, (200, 255, 255, 120), (0, 0, ice_surf.get_width(), ice_surf.get_height()), border_radius=8)
-            # Some "cracks"
-            pygame.draw.line(ice_surf, (255, 255, 255, 180), (5, 5), (self.rect.width, self.rect.height), 2)
-            pygame.draw.line(ice_surf, (255, 255, 255, 180), (self.rect.width, 5), (5, self.rect.height), 1)
-            surface.blit(ice_surf, (draw_x - 5, draw_y - 5))
+            surface.blit(self.ice_overlay, (draw_x - 5, draw_y - 5))
+
+        # Shield effect
+        if self.block_timer > 0 and self.shield_overlay:
+            surface.blit(self.shield_overlay, (draw_x - 5, draw_y - 5))
 
         for s in self.spells:
             s.draw(surface)

@@ -4,26 +4,24 @@ import numpy as np
 import os
 import sys
 
-# Try multiple import styles for mediapipe to ensure compatibility
 try:
     import mediapipe as mp
-    # Robustly find solutions if standard import fails
-    try:
-        from mediapipe.solutions import hands as mp_hands
-        from mediapipe.solutions import drawing_utils as mp_draw
-    except ImportError:
-        # Some versions (0.10.x) hide solutions inside python/solutions
-        mp_path = os.path.dirname(mp.__file__)
-        python_path = os.path.join(mp_path, 'python')
-        if python_path not in sys.path:
-            sys.path.append(python_path)
-        import solutions.hands as mp_hands
-        import solutions.drawing_utils as mp_draw
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import (
+        HandLandmarker,
+        HandLandmarkerOptions,
+        HandLandmarkerResult,
+        HandLandmarksConnections,
+        RunningMode,
+    )
+    from mediapipe.tasks.python.vision import drawing_utils as mp_draw
+    _MP_AVAILABLE = True
+except ImportError:
+    print("MediaPipe not installed. Please run: pip install mediapipe")
+    _MP_AVAILABLE = False
 except Exception as e:
-    print(f"MediaPipe Import Critical Error: {e}")
-    # Fallback to allow game to start in keyboard mode
-    mp_hands = None
-    mp_draw = None
+    print(f"MediaPipe Import Error: {e}")
+    _MP_AVAILABLE = False
 
 # Add project root to path to import from src
 base_path = os.path.dirname(os.path.abspath(__file__))
@@ -32,21 +30,31 @@ if base_path not in sys.path:
 
 from src.cv.predict_act import predict_action
 
+# Path to the hand landmarker model
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'hand_landmarker.task')
+
 class VisionSystem:
     def __init__(self):
-        if mp_hands is None:
+        if not _MP_AVAILABLE:
             raise ImportError("MediaPipe not available")
-            
-        try:
-            self.hands = mp_hands.Hands(
-                static_image_mode=False,
-                max_num_hands=1,
-                min_detection_confidence=0.7,
-                min_tracking_confidence=0.5
+
+        if not os.path.exists(MODEL_PATH):
+            raise FileNotFoundError(
+                f"Hand landmarker model not found at {MODEL_PATH}. "
+                "Download it from: https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
             )
-            self.mp_draw = mp_draw
+
+        try:
+            options = HandLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=MODEL_PATH),
+                running_mode=RunningMode.IMAGE,
+                num_hands=1,
+                min_hand_detection_confidence=0.7,
+                min_tracking_confidence=0.5,
+            )
+            self.hand_landmarker = HandLandmarker.create_from_options(options)
         except Exception as e:
-            print(f"MediaPipe hands failed: {e}")
+            print(f"MediaPipe HandLandmarker failed: {e}")
             raise e
 
         self.cap = cv2.VideoCapture(0)
@@ -77,16 +85,19 @@ class VisionSystem:
             # Flip frame for mirror effect
             frame = cv2.flip(frame, 1)
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.hands.process(rgb_frame)
+
+            # Convert to MediaPipe Image
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+            results: HandLandmarkerResult = self.hand_landmarker.detect(mp_image)
             
-            if results.multi_hand_landmarks:
-                for hand_lms in results.multi_hand_landmarks:
+            if results.hand_landmarks:
+                for hand_lms in results.hand_landmarks:
                     # Index finger tip (ID 8)
-                    index_tip = hand_lms.landmark[8]
+                    index_tip = hand_lms[8]
                     cx, cy = int(index_tip.x * self.w), int(index_tip.y * self.h)
                     
                     # Middle finger tip (ID 12)
-                    middle_tip = hand_lms.landmark[12]
+                    middle_tip = hand_lms[12]
                     mx, my = int(middle_tip.x * self.w), int(middle_tip.y * self.h)
                     
                     # Distance between Index and Middle tips
@@ -111,8 +122,16 @@ class VisionSystem:
                                 cv2.line(self.canvas, last_pt, (cx, cy), 255, 15)
                         self.drawing_points.append((cx, cy))
                     
-                    if self.mp_draw and mp_hands:
-                        self.mp_draw.draw_landmarks(frame, hand_lms, mp_hands.HAND_CONNECTIONS)
+                    # Draw hand landmarks on frame manually
+                    for connection in HandLandmarksConnections.HAND_CONNECTIONS:
+                        start_lm = hand_lms[connection.start]
+                        end_lm = hand_lms[connection.end]
+                        sx, sy = int(start_lm.x * self.w), int(start_lm.y * self.h)
+                        ex, ey = int(end_lm.x * self.w), int(end_lm.y * self.h)
+                        cv2.line(frame, (sx, sy), (ex, ey), (0, 255, 0), 2)
+                    for lm in hand_lms:
+                        px, py = int(lm.x * self.w), int(lm.y * self.h)
+                        cv2.circle(frame, (px, py), 4, (0, 0, 255), -1)
             
             # Overlay drawing on frame
             drawing_mask = self.canvas > 0
@@ -153,10 +172,10 @@ class VisionSystem:
             if spell is not None:
                 self.current_gesture = spell
                 print(f"\n==============================")
-                print(f"🪄  SPELL DETECTED: {spell} (raw class: {raw_pred})")
+                print(f"SPELL DETECTED: {spell} (raw class: {raw_pred})")
                 print(f"==============================\n")
             else:
-                print(f"⚠️  Unknown class: {raw_pred}, ignoring.")
+                print(f"Unknown class: {raw_pred}, ignoring.")
                 
         except Exception as e:
             print(f"Prediction Error: {e}")
@@ -166,8 +185,18 @@ class VisionSystem:
         self.current_gesture = None
         return g
 
+    def clear_gesture(self):
+        """Reset internal state to prevent ghost skill casting."""
+        self.current_gesture = None
+        self.drawing_points = []
+        self.is_drawing = False
+        if hasattr(self, 'canvas'):
+            self.canvas.fill(0)
+        print("VisionSystem: Gesture buffer cleared.")
+
     def stop(self):
         self.running = False
+        self.hand_landmarker.close()
         self.cap.release()
         cv2.destroyAllWindows()
 

@@ -1,54 +1,64 @@
 import pygame
 from settings import *
+from pixel_sprites import (
+    create_bullet_spell, create_bomb_spell, create_ice_spell,
+    create_normal_spell, create_block_spell,
+    PIXEL_SCALE
+)
 
 class Spell:
     def __init__(self, x, y, direction, type):
-        self.rect = pygame.Rect(x, y, 30, 20)
         self.direction = direction
         self.type = type # "/", "\", "|", "O"
         self.speed = 12 * direction
         self.active = True
         
-        # Color based on type
-        if type == "/": 
-            self.color = (255, 50, 0) # Fire Red
-        elif type == "\\": 
-            self.color = (240, 240, 240) # Normal White
+        # Color based on type (for particles)
+        if type == "/": # Gun
+            self.color = (255, 255, 100)  # Glaring Neon Yellow
+            self.sprite = create_bullet_spell()
+        elif type == "\\": # Bomb
+            self.color = (255, 50, 0)     # Glaring Neon Red
+            self.sprite = create_bomb_spell()
         elif type == "|":
-            self.color = (50, 120, 255) # Block Blue
+            self.color = (50, 120, 255)   # Block Blue
+            self.sprite = create_block_spell()
             self.speed = 5 * direction
         elif type == "O":
-            self.color = (0, 255, 255) # Ice Cyan
-            self.speed = 15 * direction # Fast freeze
+            self.color = (0, 255, 255)    # Ice Cyan
+            self.sprite = create_ice_spell()
+            self.speed = 15 * direction   # Fast freeze
         else:
             self.color = (200, 200, 200)
+            self.sprite = create_normal_spell()
+
+        # Set rect based on sprite size
+        self.rect = pygame.Rect(x, y - self.sprite.get_height() // 2,
+                                self.sprite.get_width(), self.sprite.get_height())
+
+        # Flip sprite if going left
+        if direction < 0:
+            self.sprite = pygame.transform.flip(self.sprite, True, False)
 
     def update(self, particle_system=None):
         self.rect.x += self.speed
         if particle_system:
-            # Emit intense trail
+            # Emit pixel trail
             ptype = "circle"
             count = 2
             if self.type == "/": 
-                ptype = "spark"
+                ptype = "spark" # Gunshot sparks
+                count = 4
+            elif self.type == "\\":
+                ptype = "circle" # Bomb trail
                 count = 4
             elif self.type == "O":
-                count = 3
+                ptype = "circle" # Ice trail
+                count = 2
             particle_system.emit(self.rect.centerx, self.rect.centery, self.color, count=count, ptype=ptype)
 
         if self.rect.x < -100 or self.rect.x > WIDTH + 100:
             self.active = False
 
     def draw(self, surface):
-        # projectile body
-        pygame.draw.rect(surface, self.color, self.rect, border_radius=10)
-        
-        # Inner core (white-ish)
-        core_rect = self.rect.inflate(-10, -10)
-        pygame.draw.rect(surface, (255, 255, 255), core_rect, border_radius=5)
-
-        # Large Glow effect
-        glow_size = 30
-        glow_surf = pygame.Surface((self.rect.width + glow_size, self.rect.height + glow_size), pygame.SRCALPHA)
-        pygame.draw.ellipse(glow_surf, (*self.color, 40), (0, 0, glow_surf.get_width(), glow_surf.get_height()))
-        surface.blit(glow_surf, (self.rect.x - glow_size//2, self.rect.y - glow_size//2))
+        surface.blit(self.sprite, self.rect.topleft)
