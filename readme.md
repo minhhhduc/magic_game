@@ -56,6 +56,3 @@ Một trò chơi đối kháng ma thuật sống động kết hợp giữa phon
 Bạn có thể tùy chỉnh trong file `src/config/settings.py`:
 - `TURN_PREDICT_CONSOLE`: Bật/Tắt log nhận diện của AI trong console.
 - `FPS`, `WIDTH`, `HEIGHT`: Các thông số kỹ thuật của cửa sổ game.
-
-## 🚀 Phát Triển Bởi
-**HAMIC team** - Dự án tối ưu hóa trải nghiệm người dùng với AI và Pygame.
