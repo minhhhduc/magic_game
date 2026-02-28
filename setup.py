@@ -31,13 +31,16 @@ def read_requirements():
             requirements.append(line)
     return requirements
 
+pkgs = find_packages(where="src")
+pkg_dir = {pkg: f"src/{pkg.replace('.', '/')}" for pkg in pkgs}
+
 setup(
     name="magic-game",
     version="1.0.0",
     author="HAMIC",
     description="A 2D magic fighting game with AI gesture recognition",
-    packages=find_packages(where="src"),
-    package_dir={"": "src"},
+    packages=pkgs,
+    package_dir=pkg_dir,
     py_modules=["main"],
     install_requires=read_requirements(),
     entry_points={
@@ -45,6 +48,7 @@ setup(
             "magic-game=main:main",
         ],
     },
+    options={"egg_info": {"egg_base": "src"}},
     include_package_data=True,
     python_requires=">=3.10",
 )

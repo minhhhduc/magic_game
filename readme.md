@@ -30,6 +30,11 @@ Một trò chơi đối kháng ma thuật sống động kết hợp giữa phon
    pip install .
    ```
 
+3. **Chạy game**:
+   ```bash
+   magic-game
+   ```
+
 ## 🎮 Cách Chơi
 
 ### 1. Điều khiển bằng Cử Chỉ (Ưu tiên)
