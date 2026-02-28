@@ -9,3 +9,4 @@ src/vision/cv/hasy_tools.py
 src/vision/cv/hasy-data-labels.csv
 src/vision/cv/README.txt
 src/vision/cv/symbols.csv
+src/magic_game.egg-info
