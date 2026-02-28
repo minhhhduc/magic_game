@@ -1,8 +1,8 @@
 import pygame
 import random
-from settings import WIDTH, HEIGHT, GRAVITY, PIXEL_SCALE
-from spells import Spell
-from pixel_sprites import (
+from config.settings import *
+from core.spells import Spell
+from ui.pixel_sprites import (
     create_player_sprite, create_ice_overlay,
     create_shield_overlay, create_tinted_variant,
     create_white_flash
@@ -104,12 +104,14 @@ class Player:
             if not s.active:
                 self.spells.remove(s)
 
-    def draw(self, surface):
+    def draw(self, surface, shake_offset=(0, 0)):
         # Shake effect
-        draw_x, draw_y = self.rect.x, self.rect.y
+        draw_x = self.rect.x + shake_offset[0]
+        draw_y = self.rect.y + shake_offset[1]
+        
         if self.hurt_timer > 0:
-            draw_x += random.randint(-3, 3)
-            draw_y += random.randint(-3, 3)
+            draw_x += random.randint(-4, 4)
+            draw_y += random.randint(-4, 4)
         elif self.freeze_timer > 0:
             draw_x += random.randint(-1, 1)
             draw_y += random.randint(-1, 1)
@@ -135,7 +137,7 @@ class Player:
             surface.blit(self.shield_overlay, (draw_x - 5, draw_y - 5))
 
         for s in self.spells:
-            s.draw(surface)
+            s.draw(surface, shake_offset)
 
     def cast_spell(self, gesture, particle_system=None, sounds=None):
         if self.cooldown > 0 or self.freeze_timer > 0: return

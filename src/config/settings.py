@@ -45,3 +45,6 @@ GRAVITY = 0.8
 # Gestures
 GESTURE_COOLDOWN = 60
 SHAPE_TOLERANCE = 50
+
+# Console Debugging
+TURN_PREDICT_CONSOLE = False

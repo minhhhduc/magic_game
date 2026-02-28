@@ -1,6 +1,6 @@
 import pygame
-from settings import *
-from pixel_sprites import get_pixel_font, PIXEL_SCALE, CHARACTER_DATA
+from config.settings import *
+from ui.pixel_sprites import get_pixel_font, PIXEL_SCALE, CHARACTER_DATA
 import os
 import math
 import random
@@ -13,8 +13,8 @@ class GameUI:
         self.title_font = get_pixel_font(36)
         self.welcome_font = get_pixel_font(32)
         # Load original logo with circular frame
-        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'images',
-                                 'Gemini_Generated_Image_yyuvskyyuvskyyuv.png')
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'assets', 'images',
+                                 'HAMIC_LOGO.png')
         try:
             raw_logo = pygame.image.load(logo_path).convert_alpha()
             logo_size = 150
@@ -37,13 +37,10 @@ class GameUI:
         self._start_frame = 0
         self._start_active = True
 
-    def draw(self, surface, player, bot, player_name="PLAYER", bot_name="BOT"):
+    def draw(self, surface, p_health, p_max, b_health, b_max, player_name="PLAYER", bot_name="BOT", p_color=BLUE_PRIMARY, b_color=RED_PRIMARY):
         # Draw Health Bars (pixel segmented style)
-        player_color = getattr(player, 'ui_color', BLUE_PRIMARY)
-        bot_color = getattr(bot, 'ui_color', RED_PRIMARY)
-        
-        self._draw_health_bar(surface, 50, 50, player.health, player.max_health, player_name, player_color)
-        self._draw_health_bar(surface, WIDTH - 350, 50, bot.health, bot.max_health, bot_name, bot_color)
+        self._draw_health_bar(surface, 50, 50, p_health, p_max, player_name, p_color)
+        self._draw_health_bar(surface, WIDTH - 350, 50, b_health, b_max, bot_name, b_color)
         
         # Draw Skill Panel (Pixel art bottom bar)
         panel_height = 60
@@ -51,9 +48,8 @@ class GameUI:
         
         # Pixel border bottom tray
         pygame.draw.rect(surface, (10, 10, 20), panel_rect)
-        # Top border line (pixel style)
-        for x in range(0, WIDTH, PIXEL_SCALE):
-            pygame.draw.rect(surface, ACCENT_COLOR, (x, panel_rect.y, PIXEL_SCALE, PIXEL_SCALE))
+        # Top border line - Optimized with single rect
+        pygame.draw.rect(surface, ACCENT_COLOR, (0, panel_rect.y, WIDTH, PIXEL_SCALE))
         
         # Skill labels
         skills = [
@@ -228,11 +224,18 @@ class GameUI:
         
         # ── 2) Title text (centered) ──
         if winner == "Player":
+            report_text = "REPORT: PLAYER WIN"
             result_text = "YOU WIN!"
             color = (0, 255, 120)
         else:
+            report_text = "REPORT: PLAYER LOSS"
             result_text = "Monster Wins!"
             color = (255, 50, 50)
+        
+        # Report Line (Smaller, above title)
+        rep = self.small_font.render(report_text, True, (150, 150, 150))
+        rep_rect = rep.get_rect(center=(cx, title_y - 25))
+        surface.blit(rep, rep_rect)
         
         res = self.title_font.render(result_text, True, color)
         res_rect = res.get_rect(center=(cx, title_y))
@@ -251,9 +254,13 @@ class GameUI:
             desc_rect = desc_txt.get_rect(center=(cx, sub_y))
             surface.blit(desc_txt, desc_rect)
         
-        # ── 4) Restart button (centered) ──
-        retry = self.font.render("Press 'S' to Restart", True, TEXT_COLOR)
-        retry_rect = retry.get_rect(center=(cx, restart_y))
+        # ── 4) Restart options (centered) ──
+        replay_prompt = self.font.render("WANT TO REPLAY?", True, ACCENT_COLOR)
+        replay_rect = replay_prompt.get_rect(center=(cx, restart_y - 20))
+        surface.blit(replay_prompt, replay_rect)
+        
+        retry = self.small_font.render("Press 'R' to Rematch | 'S' for Menu", True, TEXT_COLOR)
+        retry_rect = retry.get_rect(center=(cx, restart_y + 10))
         surface.blit(retry, retry_rect)
 
     def _rect_overlay(self, surface):
@@ -277,18 +284,31 @@ class GameUI:
         pct = max(0, min(1.0, val / max_val))
         fill_w = int(pct * HEALTH_BAR_WIDTH)
         
-        # Derive dark color
-        r, g, b = primary_color
-        dark_color = (max(0, r-40), max(0, g-40), max(0, b-40))
-        
-        segment_w = PIXEL_SCALE * 2
-        for sx in range(x, x + fill_w, segment_w):
-            w = min(segment_w - 1, x + fill_w - sx)
-            if w > 0:
-                # Top half lighter
-                pygame.draw.rect(surface, primary_color, (sx, y, w, HEALTH_BAR_HEIGHT // 2))
-                # Bottom half darker
-                pygame.draw.rect(surface, dark_color, (sx, y + HEALTH_BAR_HEIGHT // 2, w, HEALTH_BAR_HEIGHT // 2))
+        if fill_w > 0:
+            # Derive dark color
+            r, g, b = primary_color
+            dark_color = (max(0, r-40), max(0, g-40), max(0, b-40))
+            
+            # Draw the filled bar in larger chunks if possible, or just two rects (top/bottom)
+            # if we don't strictly need the individual "pixel segment" look of exactly 1px gaps.
+            # But the user likes the pixel style, so let's stick to it but draw more efficiently.
+            
+            # Optimization: Draw two horizontal rects (one for light, one for dark half)
+            # and then "punch out" the gaps once if needed, or just draw rectangles.
+            # Actually, drawing small rects is fast as long as it's not THOUSANDS.
+            # Here it's about 50 segments. 
+            
+            segment_w = PIXEL_SCALE * 2
+            # Instead of a loop of many small rects, we can draw two larger rects 
+            # and potentially overlay the "segment gaps" or just use a pattern.
+            
+            # Simpler optimization: Draw the two main bars
+            pygame.draw.rect(surface, primary_color, (x, y, fill_w, HEALTH_BAR_HEIGHT // 2))
+            pygame.draw.rect(surface, dark_color, (x, y + HEALTH_BAR_HEIGHT // 2, fill_w, HEALTH_BAR_HEIGHT // 2))
+            
+            # Gaps (to keep the segmented look)
+            for gx in range(x + segment_w - 1, x + fill_w, segment_w):
+                pygame.draw.rect(surface, (30, 30, 45), (gx, y, 1, HEALTH_BAR_HEIGHT))
 
         # Percentage Text
         pct_text = f"{int(pct * 100)}%"

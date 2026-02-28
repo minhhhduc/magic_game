@@ -1,12 +1,13 @@
 import pygame
 import random
-from settings import *
+import math
+from config.settings import *
 
 PIXEL_SCALE = 3
 
 class ParticleBase:
     def update(self) -> bool: return False
-    def draw(self, surface: pygame.Surface): pass
+    def draw(self, surface: pygame.Surface, shake_offset=(0, 0)): pass
 
 class Particle(ParticleBase):
     """Pixel-style square particle."""
@@ -26,14 +27,16 @@ class Particle(ParticleBase):
         self.life -= self.decay
         return self.life > 0
 
-    def draw(self, surface):
+    def draw(self, surface, shake_offset=(0, 0)):
         if self.life <= 0: return
         # Pixel square instead of circle
-        pygame.draw.rect(surface, self.color, (int(self.x), int(self.y), self.size, self.size))
+        draw_x = int(self.x + shake_offset[0])
+        draw_y = int(self.y + shake_offset[1])
+        pygame.draw.rect(surface, self.color, (draw_x, draw_y, self.size, self.size))
         # Inner bright pixel
         if self.size >= PIXEL_SCALE * 2:
             pygame.draw.rect(surface, (255, 255, 255),
-                           (int(self.x) + PIXEL_SCALE // 2, int(self.y) + PIXEL_SCALE // 2,
+                           (draw_x + PIXEL_SCALE // 2, draw_y + PIXEL_SCALE // 2,
                             PIXEL_SCALE, PIXEL_SCALE))
 
 class Spark(ParticleBase):
@@ -61,14 +64,14 @@ class Spark(ParticleBase):
         self.life -= self.decay
         return self.life > 0
 
-    def draw(self, surface):
+    def draw(self, surface, shake_offset=(0, 0)):
         if self.life <= 0: return
         # Draw trail as pixel squares
         for i, (tx, ty) in enumerate(self.trail):
             alpha_color = tuple(max(0, c - 80 + i * 30) for c in self.color)
-            pygame.draw.rect(surface, alpha_color, (tx, ty, PIXEL_SCALE, PIXEL_SCALE))
+            pygame.draw.rect(surface, alpha_color, (tx + shake_offset[0], ty + shake_offset[1], PIXEL_SCALE, PIXEL_SCALE))
         # Current position - bright pixel
-        pygame.draw.rect(surface, (255, 255, 255), (int(self.x), int(self.y), PIXEL_SCALE, PIXEL_SCALE))
+        pygame.draw.rect(surface, (255, 255, 255), (int(self.x + shake_offset[0]), int(self.y + shake_offset[1]), PIXEL_SCALE, PIXEL_SCALE))
 
 class ParticleSystem:
     def __init__(self):
@@ -91,8 +94,12 @@ class ParticleSystem:
                     decay=random.uniform(10, 20)))
 
     def update(self):
+        # In-place filtering is generally faster than list comprehension for large lists
+        # especially if many particles are removed at once.
         self.particles = [p for p in self.particles if p.update()]
 
-    def draw(self, surface):
+    def draw(self, surface, shake_offset=(0, 0)):
+        # Cache int conversion outside the loop if shake_offset is stable
+        sx, sy = int(shake_offset[0]), int(shake_offset[1])
         for p in self.particles:
-            p.draw(surface)
+            p.draw(surface, (sx, sy))

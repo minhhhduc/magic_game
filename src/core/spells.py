@@ -1,6 +1,5 @@
-import pygame
-from settings import *
-from pixel_sprites import (
+from config.settings import *
+from ui.pixel_sprites import (
     create_bullet_spell, create_bomb_spell, create_ice_spell,
     create_normal_spell, create_block_spell,
     PIXEL_SCALE
@@ -60,5 +59,5 @@ class Spell:
         if self.rect.x < -100 or self.rect.x > WIDTH + 100:
             self.active = False
 
-    def draw(self, surface):
-        surface.blit(self.sprite, self.rect.topleft)
+    def draw(self, surface, shake_offset=(0, 0)):
+        surface.blit(self.sprite, (self.rect.x + shake_offset[0], self.rect.y + shake_offset[1]))

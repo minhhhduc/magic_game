@@ -262,8 +262,14 @@ def create_block_spell():
 # ═══════════════════════════════════════════
 #  ICE OVERLAY (for frozen state)
 # ═══════════════════════════════════════════
+_ice_overlay_cache = {}
+
 def create_ice_overlay(width, height):
-    """Pixel art ice overlay with transparency."""
+    """Pixel art ice overlay with transparency. Cached by (width, height)."""
+    key = (width, height)
+    if key in _ice_overlay_cache:
+        return _ice_overlay_cache[key]
+        
     surf = pygame.Surface((width, height), pygame.SRCALPHA)
     # Fill with semi-transparent ice
     for y in range(0, height, PIXEL_SCALE):
@@ -279,14 +285,22 @@ def create_ice_overlay(width, height):
     for i in range(0, max(width, height), PIXEL_SCALE * 2):
         if i < width and i < height:
             pygame.draw.rect(surf, (255, 255, 255, 150), (i, i, PIXEL_SCALE, PIXEL_SCALE))
+            
+    _ice_overlay_cache[key] = surf
     return surf
 
 
 # ═══════════════════════════════════════════
 #  SHIELD OVERLAY (for block state)
 # ═══════════════════════════════════════════
+_shield_overlay_cache = {}
+
 def create_shield_overlay(width, height):
-    """Pixel art shield border."""
+    """Pixel art shield border. Cached by (width, height)."""
+    key = (width, height)
+    if key in _shield_overlay_cache:
+        return _shield_overlay_cache[key]
+        
     surf = pygame.Surface((width, height), pygame.SRCALPHA)
     c = (80, 160, 255, 160)
     ps = PIXEL_SCALE
@@ -298,6 +312,8 @@ def create_shield_overlay(width, height):
     for y in range(0, height, ps):
         pygame.draw.rect(surf, c, (0, y, ps, ps))
         pygame.draw.rect(surf, c, (width - ps, y, ps, ps))
+        
+    _shield_overlay_cache[key] = surf
     return surf
 
 

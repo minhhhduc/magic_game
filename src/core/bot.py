@@ -1,8 +1,8 @@
 import pygame
 import random
-from settings import *
-from spells import Spell
-from pixel_sprites import (
+from config.settings import *
+from core.spells import Spell
+from ui.pixel_sprites import (
     create_bot_sprite, create_ice_overlay,
     create_shield_overlay, create_tinted_variant,
     create_white_flash
@@ -182,12 +182,14 @@ class Bot:
         if particle_system:
             particle_system.burst(new_spell.rect.centerx, new_spell.rect.centery, new_spell.color, count=8, ptype="circle")
 
-    def draw(self, surface):
+    def draw(self, surface, shake_offset=(0, 0)):
         # Shake effect
-        draw_x, draw_y = self.rect.x, self.rect.y
+        draw_x = self.rect.x + shake_offset[0]
+        draw_y = self.rect.y + shake_offset[1]
+        
         if self.hurt_timer > 0:
-            draw_x += random.randint(-3, 3)
-            draw_y += random.randint(-3, 3)
+            draw_x += random.randint(-4, 4)
+            draw_y += random.randint(-4, 4)
         elif self.freeze_timer > 0:
             draw_x += random.randint(-1, 1)
             draw_y += random.randint(-1, 1)
@@ -202,10 +204,11 @@ class Bot:
         else:
             sprite = self.base_sprite
 
-        surface.blit(sprite, (draw_x, draw_y))
+        if sprite:
+            surface.blit(sprite, (draw_x, draw_y))
 
         # Ice Overlay
-        if self.freeze_timer > 0:
+        if self.freeze_timer > 0 and self.ice_overlay:
             surface.blit(self.ice_overlay, (draw_x - 5, draw_y - 5))
 
         # Shield effect
@@ -213,4 +216,4 @@ class Bot:
             surface.blit(self.shield_overlay, (draw_x - 5, draw_y - 5))
 
         for s in self.spells:
-            s.draw(surface)
+            s.draw(surface, shake_offset)

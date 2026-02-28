@@ -1,46 +1,61 @@
 # Magic Fighting Game - Pixel Edition
 
-Một trò chơi chiến đấu ma thuật sử dụng nhận diện cử chỉ tay (MediaPipe) và đồ họa Pixel Art.
+Một trò chơi đối kháng ma thuật sống động kết hợp giữa phong cách đồ họa Pixel Art cổ điển và công nghệ nhận diện cử chỉ tay hiện đại (AI Vision).
 
-## Yêu cầu hệ thống
-- Python 3.9 trở lên
-- Webcam (để nhận diện cử chỉ)
+## 🌟 Tính Năng Nổi Bật
 
-## Hướng dẫn cài đặt
+- **AI Vision Control**: Sử dụng Webcam để vẽ và tung phép thuật bằng chính đôi tay của bạn.
+- **Đồ Họa Pixel Art Đỉnh Cao**: Hiệu ứng hạt (particles), starfield parallax, và các đòn đánh ma thuật rực rỡ.
+- **Hệ Thống Phối Hợp Tối Ưu**: Game đã được tối ưu hóa cực mạnh (Pre-rendered rendering) giúp duy trì FPS ổn định.
+- **Nhiều Anh Hùng**: 5 nhân vật khác nhau với các kỹ năng và thuộc tính riêng biệt.
+- **Bot Thông Minh**: Đối trọng với AI bot có khả năng né đòn và phản công linh hoạt.
+- **Báo Cáo Trận Đấu**: Màn hình kết thúc trận chuyên nghiệp với tính năng chơi lại (Rematch) tức thì.
 
-1. **Clone repository:**
+## 🛠️ Yêu Cầu Hệ Thống
+
+- **Python**: 3.10 trở lên.
+- **Phụ kiện**: Webcam (để chơi bằng cử chỉ tay).
+- **Thư viện chính**: `pygame`, `opencv-python`, `mediapipe`, `numpy`, `scikit-learn`.
+
+## 📥 Cài Đặt
+
+1. **Tải mã nguồn**:
    ```bash
    git clone https://github.com/minhhhduc/magic_game.git
    cd magic_game
    ```
 
-2. **Cài đặt thư viện:**
+2. **Cài đặt môi trường & thư viện**:
    ```bash
-   pip install -r requirements.txt
+   pip install .
    ```
 
-3. **Chạy game:**
-   ```bash
-   python main.py
-   ```
+## 🎮 Cách Chơi
 
-## Cách chơi
-- **Cử chỉ tay:**
-  - Vẽ hình trên màn hình bằng ngón trỏ.
-  - **Chụm ngón trỏ và ngón giữa** để kích hoạt phép thuật.
-- **Các loại phép thuật:**
-  - `O`: Phép Đóng băng (Freeze)
-  - `/`: Bắn súng (Gun)
-  - `\`: Nổ (Explosion)
-  - `|`: Khiên bảo vệ (Shield)
-- **Điều khiển phím:**
-  - `S`: Bắt đầu / Chơi lại
-  - `ENTER`: Chọn nhân vật
-  - `Mũi tên Trái/Phải`: Duyệt nhân vật
-  - `1, 2, 3, 4`: Tung chiêu nhanh (nếu không có webcam)
+### 1. Điều khiển bằng Cử Chỉ (Ưu tiên)
+- **Vẽ Phép**: Dùng ngón trỏ di chuyển trên màn hình camera để vẽ hình.
+- **Tung Chiêu**: Chụm ngón trỏ và ngón giữa (Pinch) để xác nhận và kích hoạt phép.
+- **Các loại phép**:
+  - `/`: **Gun** (Sát thương nhanh)
+  - `\`: **Bomb** (Sát thương diện rộng)
+  - `O`: **Freeze** (Đóng băng kẻ địch)
+  - `|`: **Shield** (Bảo vệ bản thân)
 
-## Tính năng nổi bật
-- Nhận diện cử chỉ tay thời gian thực.
-- Bot đối thủ thông minh, có phản xạ và chiến thuật né chiêu.
-- Hiệu ứng âm thanh và nhạc nền đã được cân bằng chuyên nghiệp.
-肢
+### 2. Điều khiển bằng Bàn Phím
+- **Tung chiêu nhanh**: Nhấn các phím `1`, `2`, `3`, `4` (Dùng khi không có webcam).
+- **Di chuyển**: Phím mũi tên Trái/Phải.
+- **Menu/Chọn nhân vật**:
+  - `S`: Bắt đầu / Quay lại Menu chính.
+  - `Arrows`: Duyệt qua các anh hùng.
+  - `ENTER`: Xác nhận chọn nhân vật.
+- **Kết thúc trận**:
+  - `R`: **Rematch** (Chơi lại ngay lập tức với nhân vật cũ).
+  - `S`: Quay lại Menu chính.
+
+## ⚙️ Cấu Hình Nâng Cao
+Bạn có thể tùy chỉnh trong file `src/config/settings.py`:
+- `TURN_PREDICT_CONSOLE`: Bật/Tắt log nhận diện của AI trong console.
+- `FPS`, `WIDTH`, `HEIGHT`: Các thông số kỹ thuật của cửa sổ game.
+
+## 🚀 Phát Triển Bởi
+**HAMIC team** - Dự án tối ưu hóa trải nghiệm người dùng với AI và Pygame.

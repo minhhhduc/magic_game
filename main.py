@@ -2,578 +2,548 @@ import pygame
 import sys
 import os
 import random
+import cv2
+import math
 
 # Add src to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from settings import *
-from vision import VisionSystem
-from player import Player
-from bot import Bot
-from ui import GameUI
-from particles import ParticleSystem
-from pixel_sprites import create_floor_tile, get_pixel_font, PIXEL_SCALE
+from config.settings import (
+    WIDTH, HEIGHT, FPS, PIXEL_SCALE, BG_COLOR, TEXT_COLOR, ACCENT_COLOR,
+    BLUE_PRIMARY, BLUE_LIGHT, BLUE_DARK, RED_PRIMARY, RED_LIGHT, RED_DARK,
+    ORANGE_PRIMARY, ORANGE_LIGHT, ORANGE_DARK, HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT
+)
+from vision.manager import VisionSystem
+from core.player import Player
+from core.bot import Bot
+from ui.manager import GameUI
+from core.particles import ParticleSystem
+from ui.pixel_sprites import (
+    create_floor_tile, get_pixel_font, PIXEL_SCALE,
+    CHARACTER_DATA as CD, create_victim_sprite, 
+    create_victim_body_sprite, create_iron_cage_sprite
+)
+from config.iconfig import SOUND_DIR
+# Spell data configuration for easy balancing
+SPELL_CONFIG = {
+    "/":  {"name": "GUN",    "damage": (15, 20), "status": None,    "duration": 0},
+    "\\": {"name": "BOMB",   "damage": (12, 16), "status": "burn",  "duration": 240},
+    "O":  {"name": "FREEZE", "damage": (1, 4),   "status": "freeze", "duration": 240},
+    "|":  {"name": "SHIELD", "damage": (0, 0),   "status": None,    "duration": 0}
+}
 
-def main():
-    pygame.init()
-    pygame.mixer.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Magic Fighting Game - Pixel Edition")
-    clock = pygame.time.Clock()
-
-    # Load sounds
-    try:
-        # Volume balance
-        music_vol = 0.5
-        skill_vol = 0.8
-        ui_vol = 0.7
+class MagicGame:
+    def __init__(self):
+        pygame.init()
+        pygame.mixer.init()
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption("Magic Fighting Game - Pixel Edition")
+        self.clock = pygame.time.Clock()
+        self.running = True
+        self.frame_count = 0
         
-        match_end_sound = pygame.mixer.Sound(os.path.join("assets", "sound", "match_end.mp3"))
-        win_sound = pygame.mixer.Sound(os.path.join("assets", "sound", "win.mp3"))
-        lose_sound = pygame.mixer.Sound(os.path.join("assets", "sound", "lose.mp3"))
-        menu_music = pygame.mixer.Sound(os.path.join("assets", "sound", "menu_music.mp3"))
-        gameplay_music = pygame.mixer.Sound(os.path.join("assets", "sound", "gameplay_music.mp3"))
+        # Systems
+        self.vision = VisionSystem()
+        self.ui = GameUI()
+        self.particles = ParticleSystem()
         
-        match_end_sound.set_volume(skill_vol)
-        win_sound.set_volume(skill_vol)
-        lose_sound.set_volume(skill_vol)
-        menu_music.set_volume(music_vol)
-        gameplay_music.set_volume(0.2) # Keeping music slightly lower than skills
-
-        # Skill sounds - Restored to original files
-        gunshot_sound = pygame.mixer.Sound(os.path.join("assets", "sound", "gunshot.mp3"))
-        explosion_sound = pygame.mixer.Sound(os.path.join("assets", "sound", "explosion.mp3"))
-        freeze_sound = pygame.mixer.Sound(os.path.join("assets", "sound", "freeze.mp3"))
-        shield_sound = pygame.mixer.Sound(os.path.join("assets", "sound", "shield.mp3"))
-        ui_click_sound = pygame.mixer.Sound(os.path.join("assets", "sound", "ui_click.mp3"))
-
-        gunshot_sound.set_volume(skill_vol)
-        explosion_sound.set_volume(skill_vol)
-        freeze_sound.set_volume(skill_vol)
-        shield_sound.set_volume(skill_vol)
-        ui_click_sound.set_volume(ui_vol)
-
-        gameplay_music_channel = None
-        menu_music_channel = None
-    except Exception as e:
-        print(f"Failed to load sounds: {e}")
-        match_end_sound = win_sound = lose_sound = None
-        menu_music = gameplay_music = None
-        gunshot_sound = explosion_sound = freeze_sound = shield_sound = ui_click_sound = None
-        gameplay_music_channel = menu_music_channel = None
-
-    # ── Pre-generate pixel background ──
-    floor_tile = create_floor_tile()
-    tile_w = floor_tile.get_width()
-    tile_h = floor_tile.get_height()
-
-    # Generate multi-layer parallax starfield (moving universe)
-    import math
-    star_layers = []  # 3 layers: far (slow, dim), mid, near (fast, bright)
-    layer_config = [
-        (80,  0.3, [50, 60, 80]),      # far: 80 stars, speed 0.3, dim
-        (50,  0.8, [100, 130, 160]),    # mid: 50 stars, speed 0.8
-        (30,  1.5, [200, 220, 255]),    # near: 30 stars, speed 1.5, bright
-    ]
-    for count, speed, brights in layer_config:
-        layer = []
-        for _ in range(count):
-            sx = random.uniform(0, WIDTH)
-            sy = random.uniform(0, HEIGHT)
-            bright = random.choice(brights)
-            size = PIXEL_SCALE if speed < 1.0 else PIXEL_SCALE + 1
-            layer.append([sx, sy, bright, speed, size])
-        star_layers.append(layer)
-
-    # Initialize systems
-    vision = None
-    try:
-        vision = VisionSystem()
-    except Exception as e:
-        print(f"Vision System failed to initialize: {e}")
-        print("Falling back to Keyboard Controls: [1: /, 2: \\, 3: ^]")
-
-    # Game States
-    STATE_START = "START"
-    STATE_CHAR_SELECT = "CHAR_SELECT"
-    STATE_PLAYING = "PLAYING"
-    STATE_RESCUE = "RESCUE"
-    STATE_LOST = "LOST"
-    STATE_GAME_OVER = "GAME_OVER"
-    
-    current_state = STATE_START
-    winner = None
-    selected_char_idx = 0
-    
-    # Victim NPC (far right, on a castle)
-    victim_sprite = None
-    victim_body_sprite = None
-    victim_x = WIDTH - 80
-    victim_y = HEIGHT // 2 - 40
-    
-    # Rescue animation
-    rescue_frame = 0
-    bot_dissolve_alpha = 255
-    rescue_arrival_time = 0
-    rescue_player_target_x = 0
-    
-    # Losing animation (Cage)
-    iron_cage_sprite = None
-    cage_y = -200
-    cage_fall_speed = 0
-    lose_frame = 0
-
-    def reset_game():
-        nonlocal player, bot, current_state, winner
-        nonlocal victim_sprite, victim_body_sprite, victim_x, victim_y
-        nonlocal rescue_frame, bot_dissolve_alpha
-        player = Player(WIDTH // 4, HEIGHT // 2)
-        # Create victim NPC on the far right (on castle)
-        from pixel_sprites import CHARACTER_DATA as CD, create_victim_sprite, create_victim_body_sprite
-        char_data = CD[selected_char_idx]
-        player.set_character_sprite(char_data["create"]())
-        player.ui_color = char_data["color"]
+        # Game States
+        self.STATE_START = "START"
+        self.STATE_CHAR_SELECT = "CHAR_SELECT"
+        self.STATE_PLAYING = "PLAYING"
+        self.STATE_RESCUE = "RESCUE"
+        self.STATE_LOST = "LOST"
+        self.STATE_GAME_OVER = "GAME_OVER"
         
-        bot = Bot(WIDTH * 3 // 4, HEIGHT // 2)
-        bot.set_bot_sprite(char_data["opponent_create"](char_data["opponent_color"]))
-        bot.ui_color = char_data["opponent_color"]
+        self.current_state = self.STATE_START
+        self.winner = None
+        self.selected_char_idx = 0
+        self.frame_count = 0
         
-        # Create victim NPCs
-        victim_sprite = create_victim_sprite(char_data["victim_color"], char_data["victim_gender"])
-        victim_body_sprite = create_victim_body_sprite(char_data["victim_color"], char_data["victim_gender"])
-        victim_x = WIDTH - 80
-        victim_y = HEIGHT // 2 - 40
-        rescue_frame = 0
-        bot_dissolve_alpha = 255
-        nonlocal rescue_arrival_time
-        rescue_arrival_time = 0
-        nonlocal iron_cage_sprite, cage_y, cage_fall_speed, lose_frame
-        from pixel_sprites import create_iron_cage_sprite
-        iron_cage_sprite = create_iron_cage_sprite()
-        cage_y = -200
-        cage_fall_speed = 0
-        lose_frame = 0
-        if vision:
-            vision.clear_gesture()
-        current_state = STATE_PLAYING
-        winner = None
-
-    player = Player(WIDTH // 4, HEIGHT // 2)
-    bot = Bot(WIDTH * 3 // 4, HEIGHT // 2)
-    ui = GameUI()
-    ui.reset_start_animation()
-    particles = ParticleSystem()
-
-    frozen_font = get_pixel_font(22)
-    frame_count = 0
-
-    running = True
-    while running:
-        frame_count += 1
-
-        # ── Draw scrolling starfield background ──
-        screen.fill(BG_COLOR)
-
-        for layer in star_layers:
-            for star in layer:
-                # Move star downward
-                star[1] += star[3]
-                # Wrap around when off screen
-                if star[1] > HEIGHT:
-                    star[1] = -PIXEL_SCALE
-                    star[0] = random.uniform(0, WIDTH)
-                # Twinkle
-                twinkle = int(20 * math.sin(frame_count * 0.05 + star[0]))
-                b = max(30, min(255, int(star[2]) + twinkle))
-                b_blue = min(255, b + 15)
-                pygame.draw.rect(screen, (b, b, b_blue),
-                               (int(star[0]), int(star[1]), int(star[4]), int(star[4])))
+        # Entity placeholders
+        self.player = None
+        self.bot = None
+        self.star_layers = []
+        self.tile_w = 0
+        self.victim_sprite = None
+        self.victim_body_sprite = None
+        self.victim_x = 0
+        self.victim_y = 0
+        self.iron_cage_sprite = None
+        self.cage_y = 0
+        self.cage_fall_speed = 0
+        self.lose_frame = 0
+        self.rescue_frame = 0
+        self.rescue_arrival_time = 0
+        self.floor_tile = None
+        self.tile_w = 0
         
-        # Event Handling
+        # Polish: Shake, Health Interpolation, Fades, Spell Popup
+        self.shake_amount = 0.0
+        self.shake_offset = (0, 0)
+        self.p_health_disp = 100.0
+        self.b_health_disp = 100.0
+        self.fade_alpha = 255
+        self.fade_target = 0
+        self.popup_text = ""
+        self.popup_timer = 0
+        self.popup_color = (255, 255, 255)
+        self._vision_error_logged = False
+        
+        # Assets and Background
+        self.setup_assets()
+        self.setup_background()
+        
+        # UI state
+        self.ui.reset_start_animation()
+        self.frozen_font = get_pixel_font(22)
+
+    def setup_assets(self):
+        # Load sounds
+        try:
+            music_vol, skill_vol, ui_vol = 0.5, 0.8, 0.7
+            
+            self.match_end_sound = pygame.mixer.Sound(os.path.join(SOUND_DIR, "match_end.mp3"))
+            self.win_sound = pygame.mixer.Sound(os.path.join(SOUND_DIR, "win.mp3"))
+            self.lose_sound = pygame.mixer.Sound(os.path.join(SOUND_DIR, "lose.mp3"))
+            self.menu_music = pygame.mixer.Sound(os.path.join(SOUND_DIR, "menu_music.mp3"))
+            self.gameplay_music = pygame.mixer.Sound(os.path.join(SOUND_DIR, "gameplay_music.mp3"))
+            
+            for s in [self.match_end_sound, self.win_sound, self.lose_sound]: s.set_volume(skill_vol)
+            self.menu_music.set_volume(music_vol)
+            self.gameplay_music.set_volume(0.2)
+
+            self.sounds = {
+                "gun": pygame.mixer.Sound(os.path.join(SOUND_DIR, "gunshot.mp3")),
+                "explosion": pygame.mixer.Sound(os.path.join(SOUND_DIR, "explosion.mp3")),
+                "freeze": pygame.mixer.Sound(os.path.join(SOUND_DIR, "freeze.mp3")),
+                "shield": pygame.mixer.Sound(os.path.join(SOUND_DIR, "shield.mp3")),
+                "ui": pygame.mixer.Sound(os.path.join(SOUND_DIR, "ui_click.mp3"))
+            }
+            for key, s in self.sounds.items():
+                s.set_volume(skill_vol if key != "ui" else ui_vol)
+
+            self.gameplay_music_channel = None
+            self.menu_music_channel = None
+        except Exception as e:
+            print(f"Failed to load sounds: {e}")
+            self.match_end_sound = self.win_sound = self.lose_sound = None
+            self.menu_music = self.gameplay_music = None
+            self.sounds = {}
+            self.gameplay_music_channel = self.menu_music_channel = None
+
+    def setup_background(self):
+        self.floor_tile = create_floor_tile()
+        if self.floor_tile is not None:
+            self.tile_w = int(self.floor_tile.get_width())
+        else:
+            self.tile_w = WIDTH
+        
+        self.star_layers = []
+        layer_config = [
+            (80, 0.3, (50, 60, 80)),
+            (50, 0.8, (100, 130, 160)),
+            (30, 1.5, (200, 220, 255)),
+        ]
+        
+        # Pre-render star layers onto surfaces that are 2x height for seamless scrolling
+        for count, speed, base_color in layer_config:
+            layer_surf = pygame.Surface((WIDTH, HEIGHT * 2), pygame.SRCALPHA)
+            for _ in range(count):
+                sx = random.uniform(0, WIDTH)
+                sy = random.uniform(0, HEIGHT * 2)
+                size = PIXEL_SCALE if speed < 1.0 else PIXEL_SCALE + 1
+                # Add some slight variation to the base color
+                var = random.randint(-20, 20)
+                c = (max(0, min(255, base_color[0] + var)),
+                     max(0, min(255, base_color[1] + var)),
+                     max(0, min(255, base_color[2] + var)))
+                pygame.draw.rect(layer_surf, c, (int(sx), int(sy), size, size))
+            
+            self.star_layers.append({
+                "surf": layer_surf,
+                "speed": speed,
+                "y": 0.0
+            })
+
+    def reset_game(self):
+        char_data = CD[self.selected_char_idx]
+        
+        self.player = Player(WIDTH // 4, HEIGHT // 2)
+        self.player.set_character_sprite(char_data["create"]())
+        self.player.ui_color = char_data["color"]
+        
+        self.bot = Bot(WIDTH * 3 // 4, HEIGHT // 2)
+        self.bot.set_bot_sprite(char_data["opponent_create"](char_data["opponent_color"]))
+        self.bot.ui_color = char_data["opponent_color"]
+        
+        # Rescue/Lost state entities
+        self.victim_sprite = create_victim_sprite(char_data["victim_color"], char_data["victim_gender"])
+        self.victim_body_sprite = create_victim_body_sprite(char_data["victim_color"], char_data["victim_gender"])
+        self.victim_x, self.victim_y = WIDTH - 80, HEIGHT // 2 - 40
+        self.rescue_frame = 0
+        self.rescue_arrival_time = 0
+        
+        self.iron_cage_sprite = create_iron_cage_sprite()
+        self.cage_y, self.cage_fall_speed, self.lose_frame = -200, 0, 0
+        
+        # Reset display health
+        self.p_health_disp = self.player.health
+        self.b_health_disp = self.bot.health
+        
+        if self.vision: self.vision.clear_gesture()
+        self.current_state = self.STATE_PLAYING
+        self.winner = None
+
+    def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
-            
+                self.running = False
             if event.type == pygame.KEYDOWN:
-                # Start screen → go to character select
                 if event.key == pygame.K_s:
-                    if ui_click_sound: ui_click_sound.play(maxtime=500)
-                    if current_state == STATE_START:
-                        current_state = STATE_CHAR_SELECT
-                    elif current_state == STATE_GAME_OVER:
-                        current_state = STATE_START
+                    if self.sounds.get("ui"): self.sounds["ui"].play(maxtime=500)
+                    if self.current_state == self.STATE_START:
+                        self.current_state = self.STATE_CHAR_SELECT
+                    elif self.current_state in [self.STATE_GAME_OVER, self.STATE_RESCUE, self.STATE_LOST]:
+                        self.current_state = self.STATE_START
                         pygame.mixer.stop()
-                        ui.reset_start_animation() # Reset menu animation if applicable
+                        self.ui.reset_start_animation()
+                elif event.key == pygame.K_r:
+                    if self.current_state in [self.STATE_GAME_OVER, self.STATE_RESCUE, self.STATE_LOST]:
+                        if self.sounds.get("ui"): self.sounds["ui"].play(maxtime=500)
+                        pygame.mixer.stop()
+                        self.reset_game()
                 
-                # Character select controls
-                if current_state == STATE_CHAR_SELECT:
+                if self.current_state == self.STATE_CHAR_SELECT:
                     if event.key == pygame.K_LEFT:
-                        if ui_click_sound: ui_click_sound.play(maxtime=500)
-                        selected_char_idx = (selected_char_idx - 1) % 5
+                        if self.sounds.get("ui"): self.sounds["ui"].play(maxtime=500)
+                        self.selected_char_idx = (self.selected_char_idx - 1) % 5
                     elif event.key == pygame.K_RIGHT:
-                        if ui_click_sound: ui_click_sound.play(maxtime=500)
-                        selected_char_idx = (selected_char_idx + 1) % 5
+                        if self.sounds.get("ui"): self.sounds["ui"].play(maxtime=500)
+                        self.selected_char_idx = (self.selected_char_idx + 1) % 5
                     elif event.key == pygame.K_RETURN:
-                        if ui_click_sound: ui_click_sound.play(maxtime=500)
+                        if self.sounds.get("ui"): self.sounds["ui"].play(maxtime=500)
                         pygame.mixer.stop()
-                        reset_game()
-                
-                # Keyboard Controls Fallback (Only in PLAYING)
-                if current_state == STATE_PLAYING:
-                    skill_sounds = {"gun": gunshot_sound, "explosion": explosion_sound, "freeze": freeze_sound}
-                    if event.key == pygame.K_1:
-                        player.cast_spell("/", particles, skill_sounds)
-                        print("Keyboard Cast: GUN")
-                    elif event.key == pygame.K_2:
-                        player.cast_spell("\\", particles, skill_sounds)
-                        print("Keyboard Cast: BOMB")
-                    elif event.key == pygame.K_3:
-                        player.cast_spell("|", particles)
-                        print("Keyboard Cast: SHIELD")
-                    elif event.key == pygame.K_4:
-                        player.cast_spell("O", particles, skill_sounds)
-                        print("Keyboard Cast: FREEZE")
-                    elif event.key == pygame.K_SPACE or event.key == pygame.K_w or event.key == pygame.K_UP:
-                        player.jump()
+                        self.reset_game()
 
-        # Get inputs from Vision (if available and in PLAYING state)
-        if vision:
-            if not vision.running:
-                running = False
-            elif current_state == STATE_PLAYING:
-                gesture = vision.get_gesture()
-                if gesture:
-                    skill_sounds = {"gun": gunshot_sound, "explosion": explosion_sound, "freeze": freeze_sound}
-                    player.cast_spell(gesture, particles, skill_sounds)
+    def update(self):
+        self.frame_count += 1
+        
+        # Don't exit if vision fails, just log it. Use keyboard as fallback.
+        if not hasattr(self, '_vision_error_logged') and not self.vision.running:
+            print("Vision system not running. Falling back to keyboard.")
+            self._vision_error_logged = True
 
-        if current_state == STATE_PLAYING:
-            # Continuous Keyboard Movement
-            keys = pygame.key.get_pressed()
-            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-                player.move(-5)
-            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-                player.move(5)
+        # Music management
+        self.manage_music()
 
-            # Update
-            player.update(particles)
-            skill_sounds = {"gun": gunshot_sound, "explosion": explosion_sound, "freeze": freeze_sound}
-            bot.update(player, particles, skill_sounds)
-            bot.rect.x = max(WIDTH // 2, min(WIDTH - 50, bot.rect.x)) # Keep bot on right side
-            particles.update()
+        if self.current_state == self.STATE_PLAYING:
+            gesture = self.vision.get_gesture()
+            if gesture:
+                self.player.cast_spell(gesture, self.particles, self.sounds)
+                self.show_popup(gesture)
 
-            # Collision Detection: Player Spells hitting Bot
-            for s in player.spells:
-                if s.active and s.rect.colliderect(bot.rect):
-                    s.active = False
-                    particles.burst(s.rect.centerx, s.rect.centery, s.color, count=20, ptype="spark")
-                    
-                    # Block (Skill 4) makes target fully immune to Skills 1/2/3
-                    if bot.block_timer > 0 and s.type in ["/", "\\", "O"]:
-                        if shield_sound:
-                            shield_sound.play(maxtime=800)
-                        continue
-                    
-                    bot.hurt_timer = 10
-                    if s.type == "/": # Skill 1: Lightning
-                        damage = random.uniform(15, 20)
-                    elif s.type == "\\": # Skill 2: Fire (slightly stronger total)
-                        bot.burn_timer = 240
-                        damage = random.uniform(12, 16)
-                    elif s.type == "O": # Skill 3: Freeze
-                        bot.freeze_timer = 240 # 4 seconds
-                        damage = random.uniform(1, 4)
-                    elif s.type == "|":
-                        damage = 0
-                    else:
-                        damage = 0
-                    
-                    if s.type in ["/", "\\", "O"] and shield_sound:
-                        shield_sound.play(maxtime=800)
-                    
-                    bot.health = max(0.0, bot.health - damage)
-
-            # Collision Detection: Bot Spells hitting Player
-            for s in bot.spells:
-                if s.active and s.rect.colliderect(player.rect):
-                    s.active = False
-                    particles.burst(s.rect.centerx, s.rect.centery, s.color, count=15, ptype="spark")
-                    
-                    # Block (Skill 4) makes target fully immune to Skills 1/2/3
-                    if player.block_timer > 0 and s.type in ["/", "\\", "O"]:
-                        if shield_sound:
-                            shield_sound.play(maxtime=800)
-                        continue
-                    
-                    player.hurt_timer = 10
-                    if s.type == "/": # Skill 1: Lightning
-                        damage = random.uniform(15, 20)
-                    elif s.type == "\\": # Skill 2: Fire (slightly stronger total)
-                        player.burn_timer = 240
-                        damage = random.uniform(12, 16)
-                    elif s.type == "O": # Skill 3: Freeze
-                        player.freeze_timer = 240 # 4 seconds
-                        damage = random.uniform(1, 4)
-                    else:
-                        damage = 0
-                    
-                    if s.type in ["/", "\\", "O"] and shield_sound:
-                        shield_sound.play(maxtime=800)
-                    
-                    player.health = max(0.0, player.health - damage)
-
-        # Draw
-        if current_state in [STATE_PLAYING, STATE_RESCUE, STATE_LOST]:
-            # Draw pixel floor tiles
-            floor_y = HEIGHT // 2 + 80
-            for fx in range(0, WIDTH, tile_w):
-                screen.blit(floor_tile, (fx, floor_y))
-            # Floor accent line
-            for fx in range(0, WIDTH, PIXEL_SCALE):
-                pygame.draw.rect(screen, ACCENT_COLOR, (fx, floor_y, PIXEL_SCALE, PIXEL_SCALE))
+            self.player.update(self.particles)
+            self.bot.update(self.player, self.particles, self.sounds)
+            self.bot.rect.x = max(WIDTH // 2, min(WIDTH - 50, self.bot.rect.x))
+            self.particles.update()
+            self.check_collisions()
+            self.check_win_conditions()
+        
+        elif self.current_state == self.STATE_LOST:
+            self.update_lose_animation()
             
+        # UI Polish Updates
+        # 1. Smooth Health
+        if self.player is not None:
+            self.p_health_disp += (self.player.health - self.p_health_disp) * 0.1
+        if self.bot is not None:
+            self.b_health_disp += (self.bot.health - self.b_health_disp) * 0.1
             
-            # Draw tall castle tower + victim face in top window
-            if victim_sprite:
-                castle_w, castle_h = 60, 130
-                castle_x = int(victim_x) - 6
-                castle_y = floor_y - castle_h
-                
-                # Tower body (dark stone)
-                pygame.draw.rect(screen, (70, 60, 80), (castle_x, castle_y, castle_w, castle_h))
-                # Stone texture lines
-                for sy in range(castle_y + 12, castle_y + castle_h, 16):
-                    pygame.draw.line(screen, (60, 50, 70), (castle_x, sy), (castle_x + castle_w, sy), 1)
-                    for sx in range(castle_x + (8 if (sy // 16) % 2 == 0 else 0), castle_x + castle_w, 16):
-                        pygame.draw.line(screen, (60, 50, 70), (sx, sy), (sx, sy + 16), 1)
-                # Battlements on top
-                for bx in range(castle_x - 4, castle_x + castle_w + 4, 10):
-                    pygame.draw.rect(screen, (80, 70, 95), (bx, castle_y - 10, 7, 10))
-                # Top ledge
-                pygame.draw.rect(screen, (90, 80, 100), (castle_x - 4, castle_y - 2, castle_w + 8, 4))
-                
-                # Top window (where victim peeks out)
-                win_w, win_h = 28, 30
-                win_x = castle_x + (castle_w - win_w) // 2
-                win_y = castle_y + 14
-                pygame.draw.rect(screen, (30, 25, 40), (win_x, win_y, win_w, win_h))  # dark opening
-                pygame.draw.rect(screen, (100, 90, 110), (win_x - 2, win_y - 2, win_w + 4, win_h + 4), 2)  # frame
-                # Window sill
-                pygame.draw.rect(screen, (100, 90, 110), (win_x - 3, win_y + win_h - 2, win_w + 6, 4))
-                
-                # Victim face inside the window (scaled to fit) - always visible
-                vs_scaled = pygame.transform.scale(victim_sprite,
-                    (win_w - 4, win_h - 6))
-                screen.blit(vs_scaled, (win_x + 2, win_y + 2))
-                
-                # Bottom window (decorative, empty)
-                bwin_y = castle_y + 70
-                pygame.draw.rect(screen, (30, 25, 40), (win_x, bwin_y, win_w, 22))
-                pygame.draw.rect(screen, (100, 90, 110), (win_x - 2, bwin_y - 2, win_w + 4, 26), 2)
-                # Door at bottom
-                door_w, door_h = 20, 28
-                door_x = castle_x + (castle_w - door_w) // 2
-                door_y = castle_y + castle_h - door_h
-                pygame.draw.rect(screen, (50, 35, 25), (door_x, door_y, door_w, door_h))
-                pygame.draw.rect(screen, (80, 70, 60), (door_x, door_y, door_w, door_h), 2)
-                # Door handle
-                pygame.draw.circle(screen, (180, 160, 60), (door_x + door_w - 5, door_y + door_h // 2), 2)
+        # 2. Screen Shake
+        if self.shake_amount > 0:
+            sh = int(self.shake_amount)
+            self.shake_offset = (random.randint(-sh, sh), random.randint(-sh, sh))
+            self.shake_amount *= 0.9
+            if self.shake_amount < 0.5:
+                self.shake_amount = 0.0
+                self.shake_offset = (0, 0)
+        
+        # 3. Fade transitions
+        if int(self.fade_alpha) != int(self.fade_target):
+            diff = self.fade_target - self.fade_alpha
+            sign = 1 if diff > 0 else -1
+            step = sign * 10 if abs(diff) > 10 else diff
+            self.fade_alpha += step
             
-            # During RESCUE: bot lies down dead, player walks to castle, victim emerges, celebration
-            if current_state == STATE_RESCUE:
-                rescue_frame += 1
-                
-                # Draw bot lying down (rotated 90°) on the ground
-                if rescue_frame < 60:
-                    bot_dead_sprite = pygame.transform.rotate(bot.base_sprite, -90)
-                    bot_dead_x = bot.rect.x
-                    bot_dead_y = floor_y - bot_dead_sprite.get_height()
-                    bot_dead_sprite.set_alpha(max(0, 255 - rescue_frame * 5))
-                    screen.blit(bot_dead_sprite, (bot_dead_x, bot_dead_y))
-                
-                # Phase 1: Player walks RIGHT to castle (target is in front of door)
-                # Door location is roughly at victim_x
-                target_x = victim_x - 40
-                if player.rect.x < target_x:
-                    player.rect.x += 3
-                    ani_offset_p = (rescue_frame // 5) % 2 * 2 # Slight bobbing while walking
-                else:
-                    player.rect.x = int(target_x)
-                    ani_offset_p = 0
-                
-                # Phase 2: Victim emerges from castle and both celebrate
-                # Appear when player is very close to door
-                if player.rect.x >= target_x - 5:
-                    # Draw victim body sprite standing next to player (to the right)
-                    # player width is ~48px, so place victim at +50 for a nice gap
-                    vx = player.rect.x + 50
-                    vy = floor_y - 66 
-                    
-                    if rescue_frame > rescue_arrival_time + 10:
-                        # Player jump animation
-                        jump_p = int(abs(math.sin((rescue_frame - rescue_arrival_time) * 0.2) * 20))
-                    
-                    # Draw player with jump and walk bob (ani_offset_p is 0 when standing)
-                    player_copy = player.base_sprite.copy()
-                    screen.blit(player_copy, (player.rect.x, player.rect.y - jump_p - ani_offset_p))
-                else:
-                    # Draw player with walk bob
-                    player_copy = player.base_sprite.copy()
-                    screen.blit(player_copy, (player.rect.x, player.rect.y - ani_offset_p))
-                
-                particles.draw(screen)
-                
-                # Finish after long enough celebration
-                if rescue_frame > 180:
-                    current_state = STATE_GAME_OVER
-                    winner = "Player"
-                    if win_sound:
-                        win_sound.play()
-            
-            elif current_state == STATE_LOST:
-                lose_frame += 1
-                
-                # Phase 1: Cage falls from the sky
-                if iron_cage_sprite is None:
-                    from pixel_sprites import create_iron_cage_sprite
-                    iron_cage_sprite = create_iron_cage_sprite()
-                
-                target_cage_y = player.rect.bottom - iron_cage_sprite.get_height() + 10
-                if cage_y < target_cage_y:
-                    cage_fall_speed += 1
-                    cage_y += cage_fall_speed
-                    if cage_y >= target_cage_y:
-                        cage_y = target_cage_y
-                        # Slight screen shake or particles could go here
-                
-                # Phase 2: Bot jumps for joy after cage lands
-                jump_bot = 0
-                if cage_y >= target_cage_y:
-                    jump_bot = int(abs(math.sin(lose_frame * 0.2) * 25))
-                
-                # Draw player lying down (rotated 90°) behind cage
-                player_dead_sprite = pygame.transform.rotate(player.base_sprite, 90)
-                player_dead_x = player.rect.centerx - player_dead_sprite.get_width() // 2
-                player_dead_y = floor_y - player_dead_sprite.get_height()
-                screen.blit(player_dead_sprite, (player_dead_x, player_dead_y))
-                
-                # Draw cage
-                if iron_cage_sprite:
-                    screen.blit(iron_cage_sprite, (player.rect.centerx - iron_cage_sprite.get_width() // 2, cage_y))
-                
-                # Draw bot with jump
-                bot_copy = bot.base_sprite.copy()
-                screen.blit(bot_copy, (bot.rect.x, bot.rect.y - jump_bot))
-                
-                particles.draw(screen)
-                
-                # Finish after celebration
-                if lose_frame > 180:
-                    current_state = STATE_GAME_OVER
-                    winner = "Bot"
-                    if lose_sound:
-                        lose_sound.play()
-            
-            else:
-                player.draw(screen)
-                bot.draw(screen)
-                particles.draw(screen)
-                
-                # Show "FROZEN!" text over characters (pixel font)
-                if bot.freeze_timer > 0:
-                    txt = frozen_font.render("FROZEN!", True, (230, 160, 40))
-                    screen.blit(txt, (bot.rect.centerx - 40, bot.rect.top - 30))
-                if player.freeze_timer > 0:
-                    txt = frozen_font.render("FROZEN!", True, (230, 160, 40))
-                    screen.blit(txt, (player.rect.centerx - 40, player.rect.top - 30))
+        # 4. Popup Timer
+        if self.popup_timer > 0:
+            self.popup_timer -= 1
 
-            from pixel_sprites import CHARACTER_DATA as CD_UI
-            cd = CD_UI[selected_char_idx]
-            ui.draw(screen, player, bot, cd["name"], cd["opponent_name"])
+    def show_popup(self, gesture):
+        names = {"/": "GUN!", "\\": "BOMB!", "O": "FREEZE!", "|": "SHIELD!"}
+        colors: dict[str, tuple[int, int, int]] = {
+            "/": (255, 255, 100), 
+            "\\": (255, 50, 0), 
+            "O": (0, 255, 255), 
+            "|": (50, 150, 255)
+        }
+        self.popup_text = names.get(gesture, "MAGIC!")
+        self.popup_color = colors.get(gesture, (255, 255, 255))
+        self.popup_timer = 90
 
-        # Handle Background Music (Start/CharSelect)
-        if current_state in [STATE_START, STATE_CHAR_SELECT]:
-            if menu_music and (menu_music_channel is None or not menu_music_channel.get_busy()):
-                try:
-                    menu_music_channel = menu_music.play(loops=-1)
-                except:
-                    menu_music_channel = None
-        elif current_state == STATE_PLAYING:
-            if menu_music_channel:
-                try:
-                    menu_music_channel.stop()
-                except:
-                    pass
-                menu_music_channel = None
-            
-            # Handle gameplay music loop seamlessly
-            if gameplay_music and (gameplay_music_channel is None or not gameplay_music_channel.get_busy()):
-                try:
-                    gameplay_music_channel = gameplay_music.play(loops=-1)
-                except:
-                    gameplay_music_channel = None
+    def manage_music(self):
+        if self.current_state in [self.STATE_START, self.STATE_CHAR_SELECT]:
+            if self.menu_music and (self.menu_music_channel is None or not self.menu_music_channel.get_busy()):
+                self.menu_music_channel = self.menu_music.play(loops=-1)
+        elif self.current_state == self.STATE_PLAYING:
+            if self.menu_music_channel:
+                self.menu_music_channel.stop()
+                self.menu_music_channel = None
+            if self.gameplay_music and (self.gameplay_music_channel is None or not self.gameplay_music_channel.get_busy()):
+                self.gameplay_music_channel = self.gameplay_music.play(loops=-1)
         else:
-            if menu_music_channel:
-                try:
-                    if menu_music_channel.get_busy():
-                        menu_music_channel.stop()
-                except:
-                    pass
-                menu_music_channel = None
-            if gameplay_music_channel:
-                try:
-                    if gameplay_music_channel.get_busy():
-                        gameplay_music_channel.stop()
-                except:
-                    pass
-                gameplay_music_channel = None
+            if self.menu_music_channel: self.menu_music_channel.stop(); self.menu_music_channel = None
+            if self.gameplay_music_channel: self.gameplay_music_channel.stop(); self.gameplay_music_channel = None
 
-        if current_state == STATE_START:
-            ui.draw_start_screen(screen)
-        elif current_state == STATE_CHAR_SELECT:
-            ui.draw_char_select_screen(screen, selected_char_idx)
-        elif current_state == STATE_GAME_OVER:
-            from pixel_sprites import CHARACTER_DATA as CD
-            char_data = CD[selected_char_idx]
-            if winner == "Player":
-                ui.draw_game_over_screen(screen, winner, char_data, player.base_sprite, victim_body_sprite)
-            else:
-                ui.draw_game_over_screen(screen, winner, char_data["opponent_name"], bot.base_sprite)
+    def check_collisions(self):
+        self.check_spells_vs_entity(self.player.spells, self.bot)
+        self.check_spells_vs_entity(self.bot.spells, self.player)
 
+    def check_spells_vs_entity(self, spells, target):
+        for s in spells:
+            if s.active and s.rect.colliderect(target.rect):
+                s.active = False
+                self.particles.burst(s.rect.centerx, s.rect.centery, s.color, count=15, ptype="spark")
+                
+                # Shield block logic
+                if target.block_timer > 0 and s.type in ["/", "\\", "O"]:
+                    if self.sounds.get("shield"): self.sounds["shield"].play(maxtime=800)
+                    continue
+                
+                # Apply data-driven effects
+                config = SPELL_CONFIG.get(s.type)
+                if config is not None:
+                    dmg_range = config["damage"]
+                    if isinstance(dmg_range, tuple):
+                        d_min, d_max = dmg_range
+                        damage = float(random.uniform(float(d_min), float(d_max)))
+                    else:
+                        damage = 0.0
+                    
+                    status = config["status"]
+                    duration = config["duration"]
+                    if status == "burn": target.burn_timer = int(duration)
+                    elif status == "freeze": target.freeze_timer = int(duration)
+                    
+                    target.hurt_timer = 10
+                    target.health = max(0.0, target.health - damage)
+                    self.shake_amount = float(max(self.shake_amount, damage * 0.5))
+                    
+                    if s.type in ["/", "\\", "O"] and self.sounds.get("shield"): 
+                        self.sounds["shield"].play(maxtime=800)
+
+    def check_win_conditions(self):
+        if self.player.health <= 0:
+            self.current_state, self.winner, self.lose_frame = self.STATE_LOST, "Bot", 0
+            self.cage_y, self.cage_fall_speed = -300, 0
+            if self.match_end_sound: self.match_end_sound.play()
+            self.clear_entity_effects(self.player)
+        elif self.bot.health <= 0:
+            self.current_state, self.rescue_frame = self.STATE_RESCUE, 0
+            if self.match_end_sound: self.match_end_sound.play()
+            self.clear_entity_effects(self.bot)
+
+    def clear_entity_effects(self, entity):
+        entity.burn_timer = entity.freeze_timer = entity.block_timer = entity.hurt_timer = 0
+        entity.spells.clear()
+
+    def update_rescue_animation(self):
+        self.rescue_frame += 1
+        target_x = self.victim_x - 40
+        if self.player.rect.x < target_x: self.player.rect.x += 3
+        else: self.player.rect.x = int(target_x)
+        
+        if self.rescue_frame > 180:
+            self.current_state, self.winner = self.STATE_GAME_OVER, "Player"
+            if self.win_sound: self.win_sound.play()
+
+    def update_lose_animation(self):
+        self.lose_frame += 1
+        if self.iron_cage_sprite is not None and self.player is not None:
+            target_cage_y = self.player.rect.bottom - self.iron_cage_sprite.get_height() + 10
+            if self.cage_y < target_cage_y:
+                self.cage_fall_speed += 1
+                self.cage_y += self.cage_fall_speed
+                if self.cage_y >= target_cage_y: self.cage_y = target_cage_y
+        
+        if self.lose_frame > 180:
+            self.current_state, self.winner = self.STATE_GAME_OVER, "Bot"
+            if self.lose_sound: self.lose_sound.play()
+
+    def draw(self):
+        self.draw_background()
+        self.draw_vision_feedback()
+        
+        if self.current_state in [self.STATE_PLAYING, self.STATE_RESCUE, self.STATE_LOST]:
+            self.draw_world()
+            self.draw_entities()
+            self.draw_ui()
+        elif self.current_state == self.STATE_START:
+            self.ui.draw_start_screen(self.screen)
+        elif self.current_state == self.STATE_CHAR_SELECT:
+            self.ui.draw_char_select_screen(self.screen, self.selected_char_idx)
+        if self.current_state == self.STATE_GAME_OVER:
+            self.draw_game_over()
+            
+        # Spell popup
+        if self.popup_timer > 0:
+            alpha = min(255, self.popup_timer * 5)
+            txt = self.frozen_font.render(self.popup_text, True, self.popup_color)
+            txt.set_alpha(alpha)
+            self.screen.blit(txt, (WIDTH // 2 - txt.get_width() // 2, HEIGHT // 2 - 100))
+            
+        # Screen fade overlay
+        if self.fade_alpha > 0:
+            fade_surf = pygame.Surface((WIDTH, HEIGHT))
+            fade_surf.set_alpha(self.fade_alpha)
+            fade_surf.fill((0, 0, 0))
+            self.screen.blit(fade_surf, (0, 0))
+            
         pygame.display.flip()
-        clock.tick(FPS)
 
-        # Check for Game Over / Rescue
-        if current_state == STATE_PLAYING:
-            if player.health <= 0:
-                current_state = STATE_LOST
-                winner = "Bot"
-                lose_frame = 0
-                cage_y = -300
-                cage_fall_speed = 0
-                if match_end_sound:
-                    match_end_sound.play()
-                # Clear all player effects
-                player.burn_timer = 0
-                player.freeze_timer = 0
-                player.block_timer = 0
-                player.hurt_timer = 0
-                player.spells.clear()
-            elif bot.health <= 0:
-                current_state = STATE_RESCUE
-                rescue_frame = 0
-                if match_end_sound:
-                    match_end_sound.play()
-                # Clear all bot effects
-                bot.burn_timer = 0
-                bot.freeze_timer = 0
-                bot.block_timer = 0
-                bot.hurt_timer = 0
-                bot.spells.clear()
+    def draw_vision_feedback(self):
+        """Show Vision and Neural feeds in separate OpenCV windows in the main thread."""
+        # 1. Main Camera Feed
+        if self.vision.current_frame is not None:
+            cv2.imshow("Vision - Camera Feed", self.vision.current_frame)
+        
+        # 2. Neural/AI Preprocessed View
+        if hasattr(self.vision, 'debug_roi') and self.vision.debug_roi is not None:
+            # Upscale for better visibility in its own window
+            neural_view = cv2.resize(self.vision.debug_roi, (280, 280), interpolation=cv2.INTER_NEAREST)
+            cv2.imshow("Vision - Neural Hub", neural_view)
+        
+        # Required for OpenCV windows to update in the main thread
+        cv2.waitKey(1)
 
-    if vision:
-        vision.stop()
-    pygame.quit()
-    sys.exit()
+    def draw_background(self):
+        self.screen.fill(BG_COLOR)
+        for layer in self.star_layers:
+            # Update scroll position
+            layer["y"] = (layer["y"] + layer["speed"]) % HEIGHT
+            
+            # Draw two copies for seamless vertical scrolling
+            # Apply 20% shake offset to background layers for parallax depth
+            off_x = self.shake_offset[0] * 0.2
+            off_y = self.shake_offset[1] * 0.2
+            
+            # Blit the pre-rendered surface (which is 2x height)
+            # We just need to blit the part that's currently visible
+            self.screen.blit(layer["surf"], (int(off_x), int(off_y - layer["y"])))
+
+    def draw_world(self):
+        if self.floor_tile is None: return
+        floor_y = HEIGHT // 2 + 80
+        # Floor (scrolling)
+        offset = (self.frame_count * 2) % self.tile_w
+        for x in range(-self.tile_w, WIDTH + self.tile_w, self.tile_w):
+            self.screen.blit(self.floor_tile, (x - offset + self.shake_offset[0], floor_y + self.shake_offset[1]))
+        
+        # Static floor line - Optimized with single rect instead of loop
+        pygame.draw.rect(self.screen, ACCENT_COLOR, (self.shake_offset[0], floor_y + self.shake_offset[1], WIDTH, PIXEL_SCALE))
+        
+        if self.victim_sprite is not None:
+            self.draw_castle(floor_y)
+
+    def draw_castle(self, floor_y):
+        castle_w, castle_h = 60, 130
+        castle_x, castle_y = int(self.victim_x) - 6, floor_y - castle_h
+        pygame.draw.rect(self.screen, (70, 60, 80), (castle_x + self.shake_offset[0], castle_y + self.shake_offset[1], castle_w, castle_h))
+        # (Simplified stone texture/battlement drawing)
+        win_w, win_h = 28, 30
+        win_x, win_y = castle_x + (castle_w - win_w) // 2, castle_y + 14
+        pygame.draw.rect(self.screen, (30, 25, 40), (win_x + self.shake_offset[0], win_y + self.shake_offset[1], win_w, win_h))
+        vs_scaled = pygame.transform.scale(self.victim_sprite, (win_w - 4, win_h - 6))
+        self.screen.blit(vs_scaled, (win_x + 2 + self.shake_offset[0], win_y + 2 + self.shake_offset[1]))
+
+    def draw_entities(self):
+        if self.current_state == self.STATE_RESCUE:
+            self.draw_rescue_entities()
+        elif self.current_state == self.STATE_LOST:
+            self.draw_lost_entities()
+        else:
+            self.draw_gameplay_entities()
+        self.particles.draw(self.screen, self.shake_offset)
+
+    def draw_rescue_entities(self):
+        if self.rescue_frame < 60 and self.bot is not None:
+            dead_bot = pygame.transform.rotate(self.bot.base_sprite, -90)
+            dead_bot.set_alpha(max(0, 255 - self.rescue_frame * 5))
+            self.screen.blit(dead_bot, (self.bot.rect.x + self.shake_offset[0], HEIGHT // 2 + 80 - dead_bot.get_height() + self.shake_offset[1]))
+        
+        if self.player is not None:
+            ani_offset = (self.rescue_frame // 5) % 2 * 2 if self.player.rect.x < self.victim_x - 45 else 0
+            jump_p = int(abs(math.sin(max(0, self.rescue_frame - 40) * 0.2) * 20)) if self.player.rect.x >= self.victim_x - 45 else 0
+            self.screen.blit(self.player.base_sprite, (self.player.rect.x + self.shake_offset[0], self.player.rect.y - jump_p - ani_offset + self.shake_offset[1]))
+
+        # Victim
+        if self.victim_sprite is not None:
+            self.screen.blit(self.victim_sprite, (self.victim_x + self.shake_offset[0], self.victim_y + self.shake_offset[1]))
+
+    def draw_lost_entities(self):
+        if self.player is None or self.bot is None: return
+        dead_player = pygame.transform.rotate(self.player.base_sprite, 90)
+        self.screen.blit(dead_player, (self.player.rect.centerx - dead_player.get_width() // 2 + self.shake_offset[0], HEIGHT // 2 + 80 - dead_player.get_height() + self.shake_offset[1]))
+        if self.iron_cage_sprite is not None:
+            self.screen.blit(self.iron_cage_sprite, (self.player.rect.centerx - self.iron_cage_sprite.get_width() // 2 + self.shake_offset[0], int(self.cage_y) + self.shake_offset[1]))
+        self.screen.blit(self.bot.base_sprite, (self.bot.rect.x + self.shake_offset[0], self.bot.rect.y - int(abs(math.sin(self.lose_frame * 0.2) * 25)) + self.shake_offset[1]))
+
+    def draw_gameplay_entities(self):
+        # Draw player and bot with shake
+        self.player.draw(self.screen, self.shake_offset)
+        self.bot.draw(self.screen, self.shake_offset)
+        
+        if self.bot.freeze_timer > 0:
+            txt = self.frozen_font.render("FROZEN!", True, (230, 160, 40))
+            self.screen.blit(txt, (self.bot.rect.centerx - 40 + self.shake_offset[0], self.bot.rect.top - 30 + self.shake_offset[1]))
+        if self.player.freeze_timer > 0:
+            txt = self.frozen_font.render("FROZEN!", True, (230, 160, 40))
+            self.screen.blit(txt, (self.player.rect.centerx - 40 + self.shake_offset[0], self.player.rect.top - 30 + self.shake_offset[1]))
+
+    def draw_ui(self):
+        cd = CD[self.selected_char_idx]
+        if self.current_state == self.STATE_PLAYING:
+            self.ui.draw(self.screen, 
+                         self.p_health_disp, self.player.max_health,
+                         self.b_health_disp, self.bot.max_health,
+                         cd["name"], cd["opponent_name"],
+                         self.player.ui_color, self.bot.ui_color)
+        elif self.current_state == self.STATE_START:
+            self.ui.draw_start_screen(self.screen)
+        elif self.current_state == self.STATE_CHAR_SELECT:
+            self.ui.draw_char_select_screen(self.screen, self.selected_char_idx)
+
+    def draw_game_over(self):
+        char_data = CD[self.selected_char_idx]
+        if self.winner == "Player":
+            self.ui.draw_game_over_screen(self.screen, self.winner, char_data, self.player.base_sprite, self.victim_body_sprite)
+        else:
+            self.ui.draw_game_over_screen(self.screen, self.winner, char_data["opponent_name"], self.bot.base_sprite)
+
+    def run(self):
+        while self.running:
+            self.handle_events()
+            self.update()
+            self.draw()
+            self.clock.tick(FPS)
+        self.vision.stop()
+        pygame.quit()
+        sys.exit()
+
+def main():
+    game = MagicGame()
+    game.run()
 
 if __name__ == "__main__":
     main()
